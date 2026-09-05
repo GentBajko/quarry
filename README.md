@@ -33,16 +33,16 @@
 </p>
 
 <p align="center">
-  Every repo generates its own architecture reference. quarry copies each
-  one into a single git repository and indexes it. What comes back is the
-  answer that spans repos: who consumes what this one produces, what breaks
-  if it changes, what a contract actually says. It writes no documentation
-  and runs no model.
+  Capstone documents each repo in place, beside the code it describes.
+  quarry copies those references into a single git repository and indexes
+  them. What comes back is the answer that spans repos: who consumes what
+  this one produces, what breaks if it changes, what a contract actually
+  says. quarry writes no documentation and runs no model.
 </p>
 
 <p align="center">
   <img src="assets/flow.svg" width="720"
-    alt="Four repos document themselves; init clones the shared docs repo; add and update import at one commit, subject to a stamp comparison; sync rebuilds a local index; eight docs commands answer from it.">
+    alt="Capstone writes each repo's docs in place; init clones the shared docs repo; add and update import at one commit, subject to a stamp comparison; sync rebuilds a local index; eight docs commands answer from it.">
 </p>
 
 <p align="center">
