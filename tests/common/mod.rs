@@ -1,0 +1,281 @@
+//! Real git repositories in a temp dir; the binary is driven as a subprocess.
+
+#![allow(dead_code)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use tempfile::TempDir;
+
+pub struct World {
+    pub root: TempDir,
+    pub source: PathBuf,
+    pub docs_url: String,
+}
+
+/// A source repo (`ingest-api`) with a bare origin, and a bare docs repo.
+pub fn world() -> World {
+    let root = tempfile::tempdir().expect("tempdir");
+    let base = root.path().to_path_buf();
+    std::fs::create_dir_all(base.join("remotes")).expect("remotes");
+    std::fs::write(base.join("gitconfig"), "").expect("gitconfig");
+    bare(&base, "docs-quarry");
+    let source = new_source(&base, "ingest-api");
+    World {
+        root,
+        source,
+        docs_url: url(&base, "docs-quarry"),
+    }
+}
+
+fn bare(base: &Path, name: &str) {
+    let path = base.join("remotes").join(format!("{name}.git"));
+    git(
+        base,
+        base,
+        &[
+            "init",
+            "--quiet",
+            "--bare",
+            "--initial-branch=main",
+            &path.to_string_lossy(),
+        ],
+    );
+}
+
+fn url(base: &Path, name: &str) -> String {
+    format!(
+        "file://{}",
+        base.join("remotes")
+            .join(format!("{name}.git"))
+            .to_string_lossy()
+    )
+}
+
+/// A fresh source repo wired to its own bare origin, with one commit on main.
+pub fn new_source(base: &Path, name: &str) -> PathBuf {
+    bare(base, name);
+    let path = base.join(name);
+    std::fs::create_dir_all(&path).expect("source dir");
+    git(base, &path, &["init", "--quiet", "--initial-branch=main"]);
+    std::fs::write(path.join("README.md"), "# repo\n").expect("readme");
+    git(base, &path, &["add", "-A"]);
+    git(base, &path, &["commit", "--quiet", "-m", "init"]);
+    git(base, &path, &["remote", "add", "origin", &url(base, name)]);
+    git(base, &path, &["push", "--quiet", "origin", "main"]);
+    git(base, &path, &["remote", "set-head", "origin", "-a"]);
+    path
+}
+
+impl World {
+    pub fn base(&self) -> PathBuf {
+        self.root.path().to_path_buf()
+    }
+
+    /// Runs the built binary in the default source repo.
+    pub fn run(&self, args: &[&str]) -> Output {
+        self.run_in(&self.source, args)
+    }
+
+    /// Runs the built binary in any directory.
+    pub fn run_in(&self, dir: &Path, args: &[&str]) -> Output {
+        Command::new(env!("CARGO_BIN_EXE_quarry"))
+            .args(args)
+            .current_dir(dir)
+            .envs(env(&self.base()))
+            .output()
+            .expect("run quarry")
+    }
+
+    /// Runs git in any directory of this world.
+    pub fn git(&self, dir: &Path, args: &[&str]) -> Output {
+        git(&self.base(), dir, args)
+    }
+
+    /// Writes files under the source repo's docs folder.
+    pub fn write_docs(&self, files: &[(&str, &str)]) {
+        self.write_docs_in(&self.source, files);
+    }
+
+    /// Writes files under any source repo's docs folder.
+    pub fn write_docs_in(&self, repo: &Path, files: &[(&str, &str)]) {
+        for (name, body) in files {
+            let path = repo.join("docs/capstone").join(name);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).expect("docs dir");
+            }
+            std::fs::write(path, body).expect("write doc");
+        }
+    }
+
+    /// Commits everything in the default source repo and pushes it to main.
+    pub fn commit_push(&self, message: &str) -> String {
+        self.commit_push_in(&self.source, message)
+    }
+
+    /// Commits everything in a source repo and pushes it to main.
+    pub fn commit_push_in(&self, repo: &Path, message: &str) -> String {
+        self.git(repo, &["add", "-A"]);
+        self.git(repo, &["commit", "--quiet", "-m", message]);
+        let pushed = self.git(repo, &["push", "--quiet", "origin", "main"]);
+        assert!(pushed.status.success(), "{}", stderr(&pushed));
+        stdout(&self.git(repo, &["rev-parse", "HEAD"]))
+            .trim()
+            .to_string()
+    }
+
+    /// A second working clone of the docs repo, for tests that move it behind quarry's back.
+    pub fn docs_clone(&self, name: &str) -> PathBuf {
+        let path = self.base().join(name);
+        let out = self.git(
+            &self.base(),
+            &["clone", "--quiet", &self.docs_url, &path.to_string_lossy()],
+        );
+        assert!(out.status.success(), "{}", stderr(&out));
+        path
+    }
+
+    /// Another source repo, initialised against the same docs repo.
+    pub fn other_repo(&self, name: &str) -> PathBuf {
+        let path = new_source(&self.base(), name);
+        let out = self.run_in(&path, &["init", "--url", &self.docs_url]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        path
+    }
+
+    /// The docs repo's tree at `main`, as a sorted list of paths.
+    pub fn remote_files(&self) -> Vec<String> {
+        let clone = self.docs_clone(&format!("peek-{}", rand_suffix()));
+        let out = self.git(&clone, &["ls-tree", "-r", "--name-only", "main"]);
+        let mut files: Vec<String> = stdout(&out).lines().map(str::to_string).collect();
+        files.sort();
+        files
+    }
+
+    /// One file's contents in the docs repo at `main`.
+    pub fn remote_file(&self, path: &str) -> String {
+        let clone = self.docs_clone(&format!("peek-{}", rand_suffix()));
+        stdout(&self.git(&clone, &["show", &format!("main:{path}")]))
+    }
+}
+
+fn rand_suffix() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    format!("{nanos}")
+}
+
+fn env(base: &Path) -> Vec<(String, String)> {
+    let config = base.join("gitconfig").to_string_lossy().to_string();
+    vec![
+        ("GIT_AUTHOR_NAME".into(), "quarry test".into()),
+        ("GIT_AUTHOR_EMAIL".into(), "test@example.invalid".into()),
+        ("GIT_COMMITTER_NAME".into(), "quarry test".into()),
+        ("GIT_COMMITTER_EMAIL".into(), "test@example.invalid".into()),
+        ("GIT_AUTHOR_DATE".into(), "2026-09-05T00:00:00+00:00".into()),
+        (
+            "GIT_COMMITTER_DATE".into(),
+            "2026-09-05T00:00:00+00:00".into(),
+        ),
+        ("GIT_CONFIG_GLOBAL".into(), config.clone()),
+        ("GIT_CONFIG_SYSTEM".into(), config),
+        ("GIT_TERMINAL_PROMPT".into(), "0".into()),
+    ]
+}
+
+fn git(base: &Path, dir: &Path, args: &[&str]) -> Output {
+    Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .envs(env(base))
+        .output()
+        .expect("run git")
+}
+
+pub fn stdout(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).to_string()
+}
+
+pub fn stderr(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).to_string()
+}
+
+pub fn code(out: &Output) -> i32 {
+    out.status.code().unwrap_or(-1)
+}
+
+/// A minimal Capstone-shaped index page.
+pub fn index_page(date: &str) -> String {
+    format!(
+        "---\ngenerated_date: {date}\ncapstone_version: 5.2.1\n---\n\n# Overview\n\nWhat this repo is.\n"
+    )
+}
+
+/// A page declaring one produced edge.
+pub fn produces_page(date: &str, to: &str, kind: &str, name: &str) -> String {
+    format!(
+        "---\ngenerated_date: {date}\nproduces:\n  - kind: {kind}\n    name: {name}\n    to: {to}\n---\n\n## Produces\n\n| Kind | Name |\n|---|---|\n| {kind} | {name} |\n"
+    )
+}
+
+/// A page declaring one consumed edge, with the contract inline.
+pub fn consumes_page(date: &str, from: &str, kind: &str, name: &str) -> String {
+    format!(
+        "---\ngenerated_date: {date}\nconsumes:\n  - kind: {kind}\n    name: {name}\n    from: {from}\n---\n\n## Consumes\n\n### {name} (v2)\n\n| Field | Type |\n|---|---|\n| file_id | string |\n"
+    )
+}
+
+pub struct Wired {
+    pub w: World,
+    pub data: PathBuf,
+    pub report_builder: PathBuf,
+}
+
+/// Three repos in the docs repo: ingest-api -> record-store -> report-builder.
+pub fn wired() -> Wired {
+    let w = world();
+    assert!(w.run(&["init", "--url", &w.docs_url]).status.success());
+    w.write_docs(&[
+        ("00-index.md", &index_page("2026-09-04")),
+        (
+            "09-interfaces.md",
+            &produces_page("2026-09-04", "record-store", "sqs", "file-ingest"),
+        ),
+    ]);
+    w.commit_push("docs");
+    assert!(w.run(&["add"]).status.success());
+
+    let data = w.other_repo("record-store");
+    w.write_docs_in(
+        &data,
+        &[
+            ("00-index.md", &index_page("2026-09-03")),
+            (
+                "09-interfaces.md",
+                "---\ngenerated_date: 2026-09-03\nconsumes:\n  - kind: sqs\n    name: file-ingest\n    from: ingest-api\nproduces:\n  - kind: http\n    name: GET /records\n    to: report-builder\n---\n\n## Consumes\n\n### file-ingest (v2)\n\n| Field | Type | Required |\n|---|---|---|\n| file_id | string | yes |\n| content_type | enum | yes |\n",
+            ),
+        ],
+    );
+    w.commit_push_in(&data, "docs");
+    assert!(w.run_in(&data, &["add"]).status.success());
+
+    let report_builder = w.other_repo("report-builder");
+    w.write_docs_in(
+        &report_builder,
+        &[
+            ("00-index.md", &index_page("2026-09-01")),
+            (
+                "09-interfaces.md",
+                &consumes_page("2026-09-01", "record-store", "http", "GET /records"),
+            ),
+        ],
+    );
+    w.commit_push_in(&report_builder, "docs");
+    assert!(w.run_in(&report_builder, &["add"]).status.success());
+    assert!(w.run(&["sync"]).status.success());
+    Wired { w, data, report_builder }
+}
