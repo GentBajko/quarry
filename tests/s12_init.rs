@@ -147,3 +147,44 @@ fn s12_outside_a_git_repo_refuses() {
         stderr(&out)
     );
 }
+
+#[test]
+fn s12_a_fresh_clone_is_not_reported_as_never_synced() {
+    let w = world();
+    assert!(w.run(&["init", "--url", &w.docs_url]).status.success());
+    let out = w.run(&["docs", "list"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(
+        !stdout(&out).contains("never synced"),
+        "init cloned from the remote, so nothing is stale: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn s12_a_greenfield_repo_can_read_the_quarry_before_it_contributes() {
+    let w = world();
+    w.write_docs(&[("00-index.md", &index_page("2026-09-04"))]);
+    w.commit_push("docs");
+    assert!(w.run(&["init", "--url", &w.docs_url]).status.success());
+    assert!(w.run(&["add"]).status.success());
+
+    let base = w.base();
+    let blank = base.join("greenfield");
+    std::fs::create_dir_all(&blank).expect("dir");
+    w.git(
+        &base,
+        &[
+            "init",
+            "--quiet",
+            "--initial-branch=main",
+            &blank.to_string_lossy(),
+        ],
+    );
+    let init = w.run_in(&blank, &["init", "--url", &w.docs_url]);
+    assert_eq!(code(&init), 0, "{}", stderr(&init));
+
+    let list = w.run_in(&blank, &["docs", "list"]);
+    assert_eq!(code(&list), 0, "{}", stderr(&list));
+    assert!(stdout(&list).contains("ingest-api"), "{}", stdout(&list));
+}

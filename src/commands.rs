@@ -81,7 +81,7 @@ pub(crate) fn init(
         ));
     }
     let cloned = docsrepo::ensure_clone(&linked)?;
-    stamp_sync(&linked)?;
+    reindex(&linked)?;
     Ok(Response::bare(Payload::Init(InitOut {
         repo: ctx.identity.as_ref().map(|i| i.name.clone()),
         url: config.url,
