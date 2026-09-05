@@ -34,11 +34,10 @@
 
 <p align="center">
   Every repo generates its own architecture reference. quarry copies each
-  one into a single git repository, indexes the frontmatter and the prose
-  into SQLite, and serves cross-repo answers to agents and to people:
-  who consumes what this repo produces, what breaks if this changes, one
-  section of one page. It never generates documentation and never runs a
-  model.
+  one into a single git repository and indexes it. What comes back is the
+  answer that spans repos: who consumes what this one produces, what breaks
+  if it changes, what a contract actually says. It writes no documentation
+  and runs no model.
 </p>
 
 <p align="center">
@@ -62,11 +61,10 @@
 
 ### Step 1: give your repos something worth copying
 
-**quarry writes no documentation.** It copies, indexes and answers; every
-page it serves was generated somewhere else. Use
-**[Capstone](https://github.com/GentBajko/capstone)** to produce them —
-it is the tool quarry was built against, by the same author, also
-Apache-2.0.
+**quarry writes no documentation.** It copies and indexes; every page it
+serves was generated somewhere else. Use
+**[Capstone](https://github.com/GentBajko/capstone)** to produce them.
+Same author, same licence, and the tool quarry was built against.
 
 ```text
 /plugin marketplace add GentBajko/capstone     # Claude Code
@@ -80,9 +78,9 @@ npx skills add GentBajko/capstone                                  # 70+ other a
 
 Then `/capstone:map` in each repo, which reads the code and writes
 `docs/capstone/`: an index, numbered chapters, the business logic scenario
-by scenario, and `09-interfaces.md` — the chapter that declares what the
-repo produces and consumes, which is what makes `deps` and `path` work at
-all.
+by scenario, and `09-interfaces.md`, the chapter that declares what the
+repo produces and consumes. That last one is what makes `deps` and `path`
+work at all.
 
 This is not decoration. quarry's requirements *are* Capstone's output
 shape: `quarry add` refuses a repo with no `00-index.md`, every result's
@@ -108,9 +106,9 @@ Rust users can take `cargo binstall quarry`; anyone else can grab the
 archive for their platform off the releases page. Building it yourself is
 `cargo build --release`.
 
-The only requirement is `git` 2.30 or newer on `PATH` — quarry drives the
-git binary so your credentials, proxies and SSH config are the ones it
-already uses. SQLite is compiled in.
+The only requirement is `git` 2.30 or newer on `PATH`. quarry drives the
+git binary, so the credentials and proxy settings it uses are the ones
+you already configured. SQLite is compiled in.
 
 ## Use it
 
@@ -217,7 +215,7 @@ produces:
 
 `kind` is free-form and lowercased; `name` and `to`/`from` are required.
 Either side may declare an edge, and when both do quarry reports
-`declared_by: both` — a disagreement between the two stays visible instead
+`declared_by: both`. A disagreement between the two stays visible instead
 of being merged away. An edge pointing at a repo that is not in the docs
 repo is kept and marked `(not in quarry)`, so a broken link is something
 you can see. Repos declaring no edges at all are still fully searchable.
@@ -261,10 +259,10 @@ nothing; an older commit is skipped; a diverged history is refused until
 than guessing.
 
 **Two writers never corrupt the docs repo.** A person and a CI job racing
-on the same repo end with the newer commit either way: a rejected push
-discards the local commit, resets to the remote and redoes the copy, up to
-three times, because an import is a pure function of `(repo, commit)` and
-two machines produce identical bytes.
+on the same repo both end at the newer commit. A rejected push discards
+the local commit, resets to the remote and redoes the copy, up to three
+times. That is safe because an import is a pure function of
+`(repo, commit)`: two machines produce identical bytes.
 
 **Queries never touch the network.** The index rebuilds whenever the clone
 moves; `sync` is the only read-side command that pulls. A clone unsynced
@@ -287,20 +285,19 @@ is why an import is deterministic enough for two machines to race on it.
     alt="Capstone generates each repo's docs with a model; quarry copies, indexes and answers, and the answer returns as a citation in the next plan.">
 </p>
 
-What that buys you is the loop in the diagram. A feature run in one repo
-reaches for another repo's contract **before writing code**: Capstone's
+What that buys you is the loop in the diagram: a feature run in one repo
+reaches for another repo's contract **before writing code**. Capstone's
 `groom` and `plan` call `quarry docs deps` and `quarry docs section` when
-a feature touches paths covered by `09-interfaces.md`, so the constraint
-lands in the plan as a citation instead of surfacing in code review a week
-later. Set `cross_repo: "off"` in `capstone.json` if you'd rather it
-didn't.
+a feature touches paths covered by `09-interfaces.md`. The constraint
+lands in the plan as a citation, rather than in code review a week later.
+Set `cross_repo: "off"` in `capstone.json` if you'd rather it didn't.
 
 Designing something new works the same way. A repo with no origin, no
-commits and no docs can still run `quarry init` and read the whole quarry
-— registration is only needed to *contribute* — so the architecture and
-stack interviews can ask "what already runs here?" and get an answer
-instead of a guess. An internal service that already does the job is a
-dependency you never take.
+commits and no docs can still run `quarry init` and read the whole quarry;
+registration is only needed to *contribute*. So the architecture and stack
+interviews can ask what already runs here and get an answer instead of a
+guess. An internal service that already does the job is a dependency you
+never take.
 
 Without Capstone, quarry still runs: point it at any `docs/` folder that
 carries `00-index.md` and `generated_date` stamps, and declare edges with
@@ -383,9 +380,9 @@ Windows is built and tested but thin in the field. macOS and Linux are the
 ones in daily use.
 
 quarry reads whatever `docs/capstone/` holds and does not care which tool
-wrote it — but everything it assumes about that folder comes from
+wrote it. Everything it assumes about that folder still comes from
 Capstone: an index page, dated frontmatter, an interfaces chapter. Running
-it against hand-written docs works and is more maintenance than it sounds
+it against hand-written docs works, and is more maintenance than it sounds
 like.
 
 </details>
