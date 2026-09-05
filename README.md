@@ -280,17 +280,12 @@ one commit, indexes them, and answers — no model, no service, nothing to
 keep running. Generation and distribution never mix, which is why an
 import is deterministic enough for two machines to race on it.
 
-<p align="center">
-  <img src="assets/capstone.svg" width="680"
-    alt="Capstone generates each repo's docs with a model; quarry copies, indexes and answers, and the answer returns as a citation in the next plan.">
-</p>
-
-What that buys you is the loop in the diagram: a feature run in one repo
-reaches for another repo's contract **before writing code**. [Capstone](https://github.com/GentBajko/capstone)'s
-`groom` and `plan` call `quarry docs deps` and `quarry docs section` when
-a feature touches paths covered by `09-interfaces.md`. The constraint
-lands in the plan as a citation, rather than in code review a week later.
-Set `cross_repo: "off"` in `capstone.json` if you'd rather it didn't.
+What that buys you is one repo reaching for another repo's contract
+**before writing code**. [Capstone](https://github.com/GentBajko/capstone)'s `groom` and `plan` call
+`quarry docs deps` and `quarry docs section` when a feature touches paths
+covered by `09-interfaces.md`. The constraint lands in the plan as a
+citation, rather than in code review a week later. Set
+`cross_repo: "off"` in `capstone.json` if you'd rather it didn't.
 
 Designing something new works the same way. A repo with no origin, no
 commits and no docs can still run `quarry init` and read the whole quarry;
