@@ -9,6 +9,9 @@
 </p>
 
 <p align="center">
+  <a href="#step-1-give-your-repos-something-worth-copying"><img
+    src="https://img.shields.io/badge/pairs%20with-Capstone-A96A38?style=flat-square"
+    alt="Designed to be used with Capstone"></a>
   <a href="#install"><img
     src="https://img.shields.io/badge/install-one%20binary%2C%20no%20runtime-7FA7E6?style=flat-square"
     alt="Installs as a single precompiled binary"></a>
@@ -50,12 +53,44 @@
   <a href="#cross-repo-edges">Edges</a> ·
   <a href="#commands">Commands</a> ·
   <a href="#rules-worth-knowing">Rules</a> ·
-  <a href="#for-agents">For agents</a>
+  <a href="#with-capstone">With Capstone</a>
 </p>
 
 ---
 
 ## Install
+
+### Step 1: give your repos something worth copying
+
+**quarry writes no documentation.** It copies, indexes and answers; every
+page it serves was generated somewhere else. Use
+**[Capstone](https://github.com/GentBajko/capstone)** to produce them —
+it is the tool quarry was built against, by the same author, also
+Apache-2.0.
+
+```text
+/plugin marketplace add GentBajko/capstone     # Claude Code
+/plugin install capstone@capstone-marketplace
+```
+
+```bash
+gh skill install GentBajko/capstone --all --agent github-copilot   # Copilot
+npx skills add GentBajko/capstone                                  # 70+ other agents
+```
+
+Then `/capstone:map` in each repo, which reads the code and writes
+`docs/capstone/`: an index, numbered chapters, the business logic scenario
+by scenario, and `09-interfaces.md` — the chapter that declares what the
+repo produces and consumes, which is what makes `deps` and `path` work at
+all.
+
+This is not decoration. quarry's requirements *are* Capstone's output
+shape: `quarry add` refuses a repo with no `00-index.md`, every result's
+date comes from a `generated_date` stamp, and edges come from the
+interfaces chapter. Anything else works only if you reproduce that shape
+by hand.
+
+### Step 2: install quarry
 
 A single static binary. No runtime, no `cargo`, nothing to keep running.
 
@@ -238,19 +273,39 @@ for a day says so before it answers.
 Exit codes: `0` answered or nothing to do, `1` refused, `2` something
 external failed.
 
-## For agents
+## With Capstone
 
-Point your agent at `quarry docs deps` and `quarry docs section` before it
-writes code that crosses a repo boundary. With
-[Capstone](https://github.com/GentBajko/capstone), that already happens:
-`groom` and `plan` consult quarry when a feature touches paths covered by
-`09-interfaces.md`, so another repo's contract is cited in the plan before
-the first task. Set `cross_repo: "off"` in `capstone.json` to stop it.
+The two halves are meant to be run together, and the split between them is
+the whole design: **Capstone generates, quarry distributes.** Capstone
+reads code with a model and writes each repo's docs in place. quarry
+copies those pages at one commit, indexes them, and answers — no model, no
+service, nothing to keep running. Neither half does the other's job, which
+is why an import is deterministic enough for two machines to race on it.
 
 <p align="center">
   <img src="assets/capstone.svg" width="680"
     alt="Capstone generates each repo's docs with a model; quarry copies, indexes and answers, and the answer returns as a citation in the next plan.">
 </p>
+
+What that buys you is the loop in the diagram. A feature run in one repo
+reaches for another repo's contract **before writing code**: Capstone's
+`groom` and `plan` call `quarry docs deps` and `quarry docs section` when
+a feature touches paths covered by `09-interfaces.md`, so the constraint
+lands in the plan as a citation instead of surfacing in code review a week
+later. Set `cross_repo: "off"` in `capstone.json` if you'd rather it
+didn't.
+
+Designing something new works the same way. A repo with no origin, no
+commits and no docs can still run `quarry init` and read the whole quarry
+— registration is only needed to *contribute* — so the architecture and
+stack interviews can ask "what already runs here?" and get an answer
+instead of a guess. An internal service that already does the job is a
+dependency you never take.
+
+Without Capstone, quarry still runs: point it at any `docs/` folder that
+carries `00-index.md` and `generated_date` stamps, and declare edges with
+the two frontmatter keys above. You will be hand-maintaining the shape
+Capstone produces for free.
 
 ---
 
@@ -327,10 +382,11 @@ a repo that stops pushing. Its folder simply keeps its last stamp, and
 Windows is built and tested but thin in the field. macOS and Linux are the
 ones in daily use.
 
-quarry reads whatever `docs/capstone/` holds. It does not care which tool
-wrote it, but the edge commands need somebody to declare edges — with
-Capstone that is `09-interfaces.md`, and with anything else it is the two
-frontmatter keys above.
+quarry reads whatever `docs/capstone/` holds and does not care which tool
+wrote it — but everything it assumes about that folder comes from
+Capstone: an index page, dated frontmatter, an interfaces chapter. Running
+it against hand-written docs works and is more maintenance than it sounds
+like.
 
 </details>
 
