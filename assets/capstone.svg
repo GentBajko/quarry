@@ -43,7 +43,7 @@
   <text class="m" x="96" y="152" text-anchor="middle">src/</text>
   <rect class="box2" x="182" y="128" width="98" height="40" rx="4"/>
   <text class="m" x="231" y="152" text-anchor="middle">docs/capstone/</text>
-  <line class="ln" x1="142" y1="148" x2="178" y2="148" marker-end="url(#a)"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="142" y1="148" x2="178" y2="148" marker-end="url(#a)"/>
   <text class="s" x="160" y="192" text-anchor="middle">capstone map</text>
   <text class="s" x="160" y="208" text-anchor="middle">committed beside the code</text>
 
@@ -54,7 +54,7 @@
   <text class="m" x="96" y="452" text-anchor="middle">src/</text>
   <rect class="box2" x="182" y="428" width="98" height="40" rx="4"/>
   <text class="m" x="231" y="452" text-anchor="middle">docs/capstone/</text>
-  <line class="ln" x1="142" y1="448" x2="178" y2="448" marker-end="url(#a)"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="142" y1="448" x2="178" y2="448" marker-end="url(#a)"/>
   <text class="s" x="160" y="492" text-anchor="middle">capstone map</text>
   <text class="s" x="160" y="508" text-anchor="middle">09-interfaces.md declares its edges</text>
 
@@ -97,20 +97,20 @@
   <text class="m" x="956" y="506">quarry docs path</text>
 
   <!-- copy arrows -->
-  <path class="ln" d="M300 165 L345 165 L345 285 L386 285" marker-end="url(#a)"/>
+  <path class="ln" stroke="#8a8279" fill="none" d="M300 165 L345 165 L345 285 L386 285" marker-end="url(#a)"/>
   <text class="s" x="352" y="140">quarry update</text>
   <text class="s" x="352" y="156">copy at one commit</text>
-  <path class="ln" d="M300 465 L345 465 L345 355 L386 355" marker-end="url(#a)"/>
+  <path class="ln" stroke="#8a8279" fill="none" d="M300 465 L345 465 L345 355 L386 355" marker-end="url(#a)"/>
   <text class="s" x="352" y="500">quarry update</text>
 
   <!-- index arrow -->
-  <line class="ln" x1="604" y1="310" x2="676" y2="310" marker-end="url(#a)"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="604" y1="310" x2="676" y2="310" marker-end="url(#a)"/>
   <text class="s" x="640" y="296" text-anchor="middle">quarry sync</text>
   <text class="s" x="640" y="336" text-anchor="middle">pull, rebuild</text>
 
   <!-- query arrows -->
-  <path class="ln" d="M862 290 L900 290 L900 200 L936 200" marker-end="url(#a)"/>
-  <path class="ln" d="M862 330 L900 330 L900 465 L936 465" marker-end="url(#a)"/>
+  <path class="ln" stroke="#8a8279" fill="none" d="M862 290 L900 290 L900 200 L936 200" marker-end="url(#a)"/>
+  <path class="ln" stroke="#8a8279" fill="none" d="M862 330 L900 330 L900 465 L936 465" marker-end="url(#a)"/>
 
   <!-- the loop -->
   <path class="acc" d="M1045 116 C 1045 40, 700 26, 300 40 C 220 44, 168 60, 166 86" marker-end="url(#aa)"/>

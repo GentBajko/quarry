@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1230" width="900" height="1230" role="img" aria-label="A vertical flow chart of quarry: capstone writes docs in each of four repos; init clones the shared docs repo; add and update import at one commit, subject to a stamp comparison that yields current, skipped, refused or forward; sync rebuilds a local SQLite index; eight docs commands answer from it for an agent or an engineer; remove drops a repo's folder.">
+  <title>quarry command flow</title>
+  <style>
+    .node      { fill: #8a8279; fill-opacity: 0.10; stroke: #8a8279; stroke-opacity: 0.75; stroke-width: 1.3; }
+    .node-dash { fill: #8a8279; fill-opacity: 0.06; stroke: #8a8279; stroke-opacity: 0.6; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .title { fill: #80786e; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 25px; font-weight: 700; }
+    .sub   { fill: #80786e; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12.5px; }
+    .band  { fill: #80786e; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 1.1px; }
+    .h     { fill: #80786e; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; font-weight: 600; }
+    .note  { fill: #80786e; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11.5px; }
+    .tiny  { fill: #80786e; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 10.5px; }
+    .edge  { fill: #80786e; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11.5px; font-weight: 600; }
+    .mono  { fill: #80786e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 600; }
+    .mono-s{ fill: #80786e; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; font-weight: 600; }
+    .tap   { fill: #8a8279; fill-opacity: 0.95; }
+    .ln    { stroke: #8a8279; stroke-opacity: 0.85; stroke-width: 1.5; fill: none; }
+    .dash  { stroke: #8a8279; stroke-opacity: 0.7; stroke-width: 1.3; fill: none; stroke-dasharray: 5 4; }
+    .acc   { stroke: #a96a38; stroke-width: 1.8; fill: none; }
+    .acc-t { fill: #a96a38; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11px; font-weight: 600; }
+    @media (prefers-color-scheme: light) {
+      .title, .h, .edge, .mono, .mono-s { fill: #44403c; }
+      .sub, .note, .band { fill: #6b655d; }
+      .tiny { fill: #78716c; }
+      .acc { stroke: #9a5a2c; } .acc-t { fill: #9a5a2c; }
+    }
+    @media (prefers-color-scheme: dark) {
+      .node { fill-opacity: 0.16; stroke-opacity: 0.6; }
+      .node-dash { fill-opacity: 0.10; }
+      .title, .h, .edge, .mono, .mono-s { fill: #e7e5e4; }
+      .sub, .note, .band { fill: #b8b1a8; }
+      .tiny { fill: #a8a29e; }
+      .ln, .dash { stroke: #a8a29e; }
+      .tap { fill: #a8a29e; }
+      .acc { stroke: #d98d54; } .acc-t { fill: #d98d54; }
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8a8279"/>
+    </marker>
+  </defs>
+  <text class="title" x="34" y="48">quarry</text>
+  <text class="sub" x="34" y="70">one docs repo for many code repos: what each command does, and where it lands</text>
+  <text class="band" x="34" y="100">IN EACH SOURCE REPO</text>
+  <text class="note" x="34" y="118">capstone map writes docs/capstone/ and commits it with the code; 09-interfaces.md names what each repo produces and consumes</text>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="30" y="130" width="195" height="58" rx="6"/>
+  <text class="mono-s" x="44" y="152">identity-api</text>
+  <text class="tiny" x="44" y="169">users and tokens</text>
+  <text class="tiny" x="44" y="183">docs/capstone/</text>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="245" y="130" width="195" height="58" rx="6"/>
+  <text class="mono-s" x="259" y="152">ingest-api</text>
+  <text class="tiny" x="259" y="169">publishes file-ingest</text>
+  <text class="tiny" x="259" y="183">docs/capstone/</text>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="460" y="130" width="195" height="58" rx="6"/>
+  <text class="mono-s" x="474" y="152">record-store</text>
+  <text class="tiny" x="474" y="169">consumes it, serves records</text>
+  <text class="tiny" x="474" y="183">docs/capstone/</text>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="675" y="130" width="195" height="58" rx="6"/>
+  <text class="mono-s" x="689" y="152">report-builder</text>
+  <text class="tiny" x="689" y="169">nightly rollups</text>
+  <text class="tiny" x="689" y="183">docs/capstone/</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="127" y1="188" x2="127" y2="208"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="342" y1="188" x2="342" y2="208"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="557" y1="188" x2="557" y2="208"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="772" y1="188" x2="772" y2="208"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="127" y1="208" x2="772" y2="208"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="208" x2="450" y2="244" marker-end="url(#a)"/>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="290" y="248" width="320" height="52" rx="6"/>
+  <text class="mono" x="304" y="270">quarry init --url &lt;docs repo&gt;</text>
+  <text class="tiny" x="304" y="287">once per repo, or once per CI job</text>
+  <text class="note" x="626" y="272">writes .quarry/.config and .gitignore,</text>
+  <text class="note" x="626" y="288">clones the docs repo shallowly</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="300" x2="450" y2="322"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="340" y1="322" x2="560" y2="322"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="340" y1="322" x2="340" y2="336" marker-end="url(#a)"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="560" y1="322" x2="560" y2="336" marker-end="url(#a)"/>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="245" y="338" width="190" height="62" rx="6"/>
+  <text class="mono-s" x="259" y="360">quarry add</text>
+  <text class="tiny" x="259" y="377">first import</text>
+  <text class="tiny" x="259" y="391">registers the repo</text>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="465" y="338" width="190" height="62" rx="6"/>
+  <text class="mono-s" x="479" y="360">quarry update</text>
+  <text class="tiny" x="479" y="377">every merge to main,</text>
+  <text class="tiny" x="479" y="391">by hand or in CI</text>
+  <path class="ln" stroke="#8a8279" fill="none" d="M340 400 L340 418 L450 418 L450 434" marker-end="url(#a)"/>
+  <path class="ln" stroke="#8a8279" fill="none" d="M560 400 L560 418 L450 418"/>
+  <path class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" d="M450 434 L590 472 L450 510 L310 472 Z"/>
+  <text class="mono-s" x="450" y="476" text-anchor="middle">stamp vs HEAD</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="310" y1="472" x2="214" y2="472" marker-end="url(#a)"/>
+  <text class="edge" x="206" y="468" text-anchor="end">same commit</text>
+  <text class="tiny" x="206" y="484" text-anchor="end">current, nothing written</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="590" y1="472" x2="686" y2="472" marker-end="url(#a)"/>
+  <text class="edge" x="694" y="468">older, or diverged</text>
+  <text class="tiny" x="694" y="484">skipped, or refused until --force</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="510" x2="450" y2="544" marker-end="url(#a)"/>
+  <text class="edge" x="460" y="530">forward</text>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="250" y="548" width="400" height="138" rx="6"/>
+  <text class="h" x="266" y="572">docs repo · one git repository</text>
+  <text class="tiny" x="266" y="589">copied at one commit, permalinks pinned, no LLM</text>
+  <text class="mono-s" x="274" y="612">identity-api/</text>
+  <text class="mono-s" x="274" y="628">ingest-api/</text>
+  <text class="mono-s" x="274" y="644">record-store/</text>
+  <text class="mono-s" x="274" y="660">report-builder/</text>
+  <text class="tiny" x="420" y="612">09-interfaces.md, 00-index.md, …</text>
+  <text class="tiny" x="420" y="628">+ .quarry-stamp</text>
+  <text class="tiny" x="266" y="676">00-index.md at the root, regenerated on every write</text>
+  <rect class="node-dash" x="30" y="586" width="190" height="62" rx="6"/>
+  <text class="mono-s" x="44" y="608">quarry remove</text>
+  <text class="tiny" x="44" y="625">drops the folder,</text>
+  <text class="tiny" x="44" y="639">reports who still points here</text>
+  <line class="dash" x1="220" y1="617" x2="246" y2="617" marker-end="url(#a)"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="686" x2="450" y2="716" marker-end="url(#a)"/>
+  <text class="edge" x="462" y="704">quarry sync</text>
+  <text class="tiny" x="552" y="704">pull, then rebuild</text>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="290" y="720" width="320" height="62" rx="6"/>
+  <text class="mono" x="304" y="742">.docs-index.sqlite</text>
+  <text class="tiny" x="304" y="759">pages · edges · full text, derived from the clone</text>
+  <text class="tiny" x="304" y="773">never committed, rebuilt when the clone moves</text>
+  <text class="note" x="626" y="744">quarry docs index --force</text>
+  <text class="tiny" x="626" y="760">rebuilds it without the network</text>
+  <text class="band" x="34" y="806">ASK IT THINGS</text>
+  <text class="note" x="34" y="826">answered from the index, never the network; --json on every one</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="782" x2="450" y2="1122"/>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="40" y="840" width="370" height="52" rx="6"/>
+  <text class="mono-s" x="54" y="862">docs list</text>
+  <text class="tiny" x="54" y="879">every repo, with page and edge counts</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="866" x2="414" y2="866" marker-end="url(#a)"/>
+  <circle class="tap" cx="450" cy="866" r="3"/>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="490" y="840" width="370" height="52" rx="6"/>
+  <text class="mono-s" x="504" y="862">docs list &lt;repo&gt;</text>
+  <text class="tiny" x="504" y="879">that repo&#x27;s files and their dates</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="866" x2="486" y2="866" marker-end="url(#a)"/>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="40" y="908" width="370" height="52" rx="6"/>
+  <text class="mono-s" x="54" y="930">docs show &lt;repo&gt;</text>
+  <text class="tiny" x="54" y="947">stamps, both edge directions, overview</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="934" x2="414" y2="934" marker-end="url(#a)"/>
+  <circle class="tap" cx="450" cy="934" r="3"/>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="490" y="908" width="370" height="52" rx="6"/>
+  <text class="mono-s" x="504" y="930">docs section &lt;repo&gt; &quot;&lt;heading&gt;&quot;</text>
+  <text class="tiny" x="504" y="947">one section, never a whole file</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="934" x2="486" y2="934" marker-end="url(#a)"/>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="40" y="976" width="370" height="52" rx="6"/>
+  <text class="mono-s" x="54" y="998">docs search &quot;&lt;term&gt;&quot;</text>
+  <text class="tiny" x="54" y="1015">hits by repo, file and heading</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="1002" x2="414" y2="1002" marker-end="url(#a)"/>
+  <circle class="tap" cx="450" cy="1002" r="3"/>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="490" y="976" width="370" height="52" rx="6"/>
+  <text class="mono-s" x="504" y="998">docs deps &lt;repo&gt; --downstream</text>
+  <text class="tiny" x="504" y="1015">who breaks if this repo changes</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="1002" x2="486" y2="1002" marker-end="url(#a)"/>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="40" y="1044" width="370" height="52" rx="6"/>
+  <text class="mono-s" x="54" y="1066">docs deps &lt;repo&gt; --upstream</text>
+  <text class="tiny" x="54" y="1083">what this repo relies on</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="1070" x2="414" y2="1070" marker-end="url(#a)"/>
+  <circle class="tap" cx="450" cy="1070" r="3"/>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="490" y="1044" width="370" height="52" rx="6"/>
+  <text class="mono-s" x="504" y="1066">docs path &lt;a&gt; &lt;b&gt;</text>
+  <text class="tiny" x="504" y="1083">the chain of edges between two repos</text>
+  <line class="ln" stroke="#8a8279" fill="none" x1="450" y1="1070" x2="486" y2="1070" marker-end="url(#a)"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="225" y1="1122" x2="675" y2="1122"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="225" y1="1122" x2="225" y2="1138" marker-end="url(#a)"/>
+  <line class="ln" stroke="#8a8279" fill="none" x1="675" y1="1122" x2="675" y2="1138" marker-end="url(#a)"/>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="40" y="1142" width="370" height="62" rx="6"/>
+  <text class="h" x="54" y="1164">an agent, mid-feature</text>
+  <text class="tiny" x="54" y="1181">capstone groom and plan call deps and section</text>
+  <text class="tiny" x="54" y="1195">before the first question is asked</text>
+  <rect class="node" fill="#8a8279" fill-opacity="0.10" stroke="#8a8279" x="490" y="1142" width="370" height="62" rx="6"/>
+  <text class="h" x="504" y="1164">an engineer, in a terminal</text>
+  <text class="tiny" x="504" y="1181">the same answers, human readable and offline,</text>
+  <text class="tiny" x="504" y="1195">straight from the local clone</text>
+  <path class="acc" d="M40 1173 L16 1173 L16 159 L26 159" marker-end="url(#a)"/>
+  <text class="acc-t" x="12" y="660" text-anchor="middle" transform="rotate(-90 12 660)">the answer becomes a citation in the next plan</text>
+</svg>

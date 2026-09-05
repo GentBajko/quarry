@@ -1,0 +1,24 @@
+quarry
+Copyright 2026 Gent Bajko
+
+https://github.com/GentBajko/quarry
+
+This product is licensed under the Apache License, Version 2.0 (see
+LICENSE). Per section 4(d) of that License, any Derivative Work you
+distribute must include a readable copy of the attribution notices in
+this file, and per section 4(b) any file you modify must carry a
+prominent notice stating that you changed it.
+
+--------------------------------------------------------------------
+Third-party material
+--------------------------------------------------------------------
+
+No third-party source is vendored into this repository. quarry links
+the Rust crates declared in Cargo.toml, each under its own permissive
+licence (MIT, Apache-2.0, BSD or Unlicense); SQLite, compiled in
+through libsqlite3-sys, is in the public domain. Their notices travel
+with those crates.
+
+quarry reads documentation produced by Capstone
+(https://github.com/GentBajko/capstone, Apache-2.0) but bundles none
+of it and does not invoke it.
