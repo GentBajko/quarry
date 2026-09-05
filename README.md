@@ -4,8 +4,7 @@
 
 <p align="center">
   <strong>One face for every repo.</strong><br>
-  Every repo's reference in one place, indexed,<br>
-  so a change in one is a question you can answer.
+  Everything, in its right place.
 </p>
 
 <p align="center">
