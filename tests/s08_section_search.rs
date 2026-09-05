@@ -28,12 +28,8 @@ fn s8_an_exact_heading_returns_one_body() {
 #[test]
 fn s8_matching_is_case_and_whitespace_insensitive() {
     let it = wired();
-    let out = it.w.run(&[
-        "docs",
-        "section",
-        "record-store",
-        "  FILE-INGEST   (V2) ",
-    ]);
+    let out =
+        it.w.run(&["docs", "section", "record-store", "  FILE-INGEST   (V2) "]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(stdout(&out).contains("file_id"), "{}", stdout(&out));
 }

@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 620" width="1180" height="620" role="img" aria-label="Capstone writes each repo's docs in place; quarry copies them into one docs repo, indexes them, and answers cross-repo questions, so a feature run in one repo learns another repo's contract before code is written.">
+  <title>How quarry and Capstone work together</title>
+  <style>
+    .box  { fill: #f6f8fa; stroke: #57606a; stroke-width: 1.5; }
+    .box2 { fill: #ffffff; stroke: #8c959f; stroke-width: 1.2; }
+    .t    { fill: #1f2328; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; }
+    .h    { fill: #1f2328; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; font-weight: 600; }
+    .s    { fill: #57606a; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11px; }
+    .m    { fill: #1f2328; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+    .ln   { stroke: #57606a; stroke-width: 1.6; fill: none; }
+    .acc      { stroke: #bc4c00; stroke-width: 2; fill: none; }
+    .acc-t    { fill: #bc4c00; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 12px; font-weight: 600; }
+    .divider  { stroke: #8c959f; stroke-width: 1.2; stroke-dasharray: 5 5; fill: none; }
+    @media (prefers-color-scheme: dark) {
+      .box  { fill: #161b22; stroke: #8b949e; }
+      .box2 { fill: #0d1117; stroke: #6e7681; }
+      .t, .h, .m { fill: #e6edf3; }
+      .s    { fill: #9198a1; }
+      .ln   { stroke: #8b949e; }
+      .divider { stroke: #6e7681; }
+      .acc     { stroke: #ff9d5c; }
+      .acc-t   { fill: #ff9d5c; }
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#57606a"/>
+    </marker>
+    <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#bc4c00"/>
+    </marker>
+  </defs>
+
+  <!-- LLM boundary -->
+  <line class="divider" x1="340" y1="70" x2="340" y2="600"/>
+  <text class="s" x="332" y="60" text-anchor="end">generated: an LLM reads the code</text>
+  <text class="s" x="350" y="60">derived: copy, index, query — no LLM</text>
+
+  <!-- source repo: ingest-api -->
+  <rect class="box" x="30" y="90" width="270" height="150" rx="6"/>
+  <text class="h" x="46" y="114">source repo · ingest-api</text>
+  <rect class="box2" x="52" y="128" width="88" height="40" rx="4"/>
+  <text class="m" x="96" y="152" text-anchor="middle">src/</text>
+  <rect class="box2" x="182" y="128" width="98" height="40" rx="4"/>
+  <text class="m" x="231" y="152" text-anchor="middle">docs/capstone/</text>
+  <line class="ln" x1="142" y1="148" x2="178" y2="148" marker-end="url(#a)"/>
+  <text class="s" x="160" y="192" text-anchor="middle">capstone map</text>
+  <text class="s" x="160" y="208" text-anchor="middle">committed beside the code</text>
+
+  <!-- source repo: record-store -->
+  <rect class="box" x="30" y="390" width="270" height="150" rx="6"/>
+  <text class="h" x="46" y="414">source repo · record-store</text>
+  <rect class="box2" x="52" y="428" width="88" height="40" rx="4"/>
+  <text class="m" x="96" y="452" text-anchor="middle">src/</text>
+  <rect class="box2" x="182" y="428" width="98" height="40" rx="4"/>
+  <text class="m" x="231" y="452" text-anchor="middle">docs/capstone/</text>
+  <line class="ln" x1="142" y1="448" x2="178" y2="448" marker-end="url(#a)"/>
+  <text class="s" x="160" y="492" text-anchor="middle">capstone map</text>
+  <text class="s" x="160" y="508" text-anchor="middle">09-interfaces.md declares its edges</text>
+
+  <!-- docs repo -->
+  <rect class="box" x="390" y="200" width="210" height="230" rx="6"/>
+  <text class="h" x="406" y="226">docs repo · the quarry</text>
+  <text class="s" x="406" y="244">one folder per repo, git</text>
+  <rect class="box2" x="410" y="256" width="170" height="66" rx="4"/>
+  <text class="m" x="422" y="276">ingest-api/</text>
+  <text class="m" x="434" y="294">00-index.md …</text>
+  <text class="m" x="434" y="312">.quarry-stamp</text>
+  <rect class="box2" x="410" y="334" width="170" height="48" rx="4"/>
+  <text class="m" x="422" y="354">record-store/</text>
+  <text class="m" x="434" y="372">09-interfaces.md</text>
+  <text class="m" x="422" y="404">00-index.md</text>
+  <text class="s" x="500" y="422" text-anchor="middle">regenerated every write</text>
+
+  <!-- index -->
+  <rect class="box" x="680" y="250" width="180" height="120" rx="6"/>
+  <text class="h" x="696" y="276">local index</text>
+  <text class="m" x="696" y="296">.docs-index.sqlite</text>
+  <text class="s" x="696" y="318">pages · edges · FTS5</text>
+  <text class="s" x="696" y="336">derived, never committed</text>
+  <text class="s" x="696" y="354">rebuilt when the clone moves</text>
+
+  <!-- agent -->
+  <rect class="box" x="940" y="120" width="210" height="150" rx="6"/>
+  <text class="h" x="956" y="146">agent in ingest-api</text>
+  <text class="s" x="956" y="164">capstone groom / plan</text>
+  <text class="m" x="956" y="188">quarry docs deps</text>
+  <text class="m" x="956" y="206">quarry docs section</text>
+  <text class="s" x="956" y="230">learns: content_type is an</text>
+  <text class="s" x="956" y="246">enum without CSV</text>
+
+  <!-- engineer -->
+  <rect class="box" x="940" y="420" width="210" height="110" rx="6"/>
+  <text class="h" x="956" y="446">engineer, any repo</text>
+  <text class="m" x="956" y="470">quarry docs list</text>
+  <text class="m" x="956" y="488">quarry docs search</text>
+  <text class="m" x="956" y="506">quarry docs path</text>
+
+  <!-- copy arrows -->
+  <path class="ln" d="M300 165 L345 165 L345 285 L386 285" marker-end="url(#a)"/>
+  <text class="s" x="352" y="140">quarry update</text>
+  <text class="s" x="352" y="156">copy at one commit</text>
+  <path class="ln" d="M300 465 L345 465 L345 355 L386 355" marker-end="url(#a)"/>
+  <text class="s" x="352" y="500">quarry update</text>
+
+  <!-- index arrow -->
+  <line class="ln" x1="604" y1="310" x2="676" y2="310" marker-end="url(#a)"/>
+  <text class="s" x="640" y="296" text-anchor="middle">quarry sync</text>
+  <text class="s" x="640" y="336" text-anchor="middle">pull, rebuild</text>
+
+  <!-- query arrows -->
+  <path class="ln" d="M862 290 L900 290 L900 200 L936 200" marker-end="url(#a)"/>
+  <path class="ln" d="M862 330 L900 330 L900 465 L936 465" marker-end="url(#a)"/>
+
+  <!-- the loop -->
+  <path class="acc" d="M1045 116 C 1045 40, 700 26, 300 40 C 220 44, 168 60, 166 86" marker-end="url(#aa)"/>
+  <text class="acc-t" x="640" y="26" text-anchor="middle">the constraint is cited in the plan, before a line is written</text>
+</svg>

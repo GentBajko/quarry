@@ -12,10 +12,7 @@ fn s7_downstream_defaults_to_depth_one() {
     let out = it.w.run(&["docs", "deps", "ingest-api", "--downstream"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let text = stdout(&out);
-    assert!(
-        text.contains("sqs file-ingest -> record-store"),
-        "{text}"
-    );
+    assert!(text.contains("sqs file-ingest -> record-store"), "{text}");
     assert!(!text.contains("report-builder"), "{text}");
     assert!(text.contains("1 repos, depth 1, truncated"), "{text}");
 }
@@ -23,14 +20,8 @@ fn s7_downstream_defaults_to_depth_one() {
 #[test]
 fn s7_depth_two_reaches_the_second_hop() {
     let it = wired();
-    let out = it.w.run(&[
-        "docs",
-        "deps",
-        "ingest-api",
-        "--downstream",
-        "--depth",
-        "2",
-    ]);
+    let out =
+        it.w.run(&["docs", "deps", "ingest-api", "--downstream", "--depth", "2"]);
     let text = stdout(&out);
     assert!(text.contains("record-store"), "{text}");
     assert!(text.contains("GET /records -> report-builder"), "{text}");
@@ -40,14 +31,8 @@ fn s7_depth_two_reaches_the_second_hop() {
 #[test]
 fn s7_depth_zero_is_unlimited() {
     let it = wired();
-    let out = it.w.run(&[
-        "docs",
-        "deps",
-        "ingest-api",
-        "--downstream",
-        "--depth",
-        "0",
-    ]);
+    let out =
+        it.w.run(&["docs", "deps", "ingest-api", "--downstream", "--depth", "0"]);
     let text = stdout(&out);
     assert!(text.contains("report-builder"), "{text}");
     assert!(!text.contains("truncated"), "{text}");
@@ -56,8 +41,14 @@ fn s7_depth_zero_is_unlimited() {
 #[test]
 fn s7_upstream_walks_the_other_way() {
     let it = wired();
-    let out =
-        it.w.run(&["docs", "deps", "report-builder", "--upstream", "--depth", "0"]);
+    let out = it.w.run(&[
+        "docs",
+        "deps",
+        "report-builder",
+        "--upstream",
+        "--depth",
+        "0",
+    ]);
     let text = stdout(&out);
     assert!(text.contains("record-store"), "{text}");
     assert!(text.contains("ingest-api"), "{text}");
@@ -114,14 +105,7 @@ fn s7_a_cycle_is_marked_once_and_terminates() {
     w.commit_push_in(&b, "docs");
     assert!(w.run_in(&b, &["add"]).status.success());
     assert!(w.run(&["sync"]).status.success());
-    let out = w.run(&[
-        "docs",
-        "deps",
-        "ingest-api",
-        "--downstream",
-        "--depth",
-        "0",
-    ]);
+    let out = w.run(&["docs", "deps", "ingest-api", "--downstream", "--depth", "0"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(stdout(&out).contains("(cycle)"), "{}", stdout(&out));
 }

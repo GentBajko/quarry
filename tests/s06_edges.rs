@@ -139,11 +139,7 @@ fn s6_a_page_with_only_tables_declares_the_same_edges() {
     );
 
     let deps = w.run(&["docs", "deps", "ingest-api", "--downstream"]);
-    assert!(
-        stdout(&deps).contains("record-store"),
-        "{}",
-        stdout(&deps)
-    );
+    assert!(stdout(&deps).contains("record-store"), "{}", stdout(&deps));
 }
 
 #[test]

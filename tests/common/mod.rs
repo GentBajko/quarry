@@ -277,5 +277,9 @@ pub fn wired() -> Wired {
     w.commit_push_in(&report_builder, "docs");
     assert!(w.run_in(&report_builder, &["add"]).status.success());
     assert!(w.run(&["sync"]).status.success());
-    Wired { w, data, report_builder }
+    Wired {
+        w,
+        data,
+        report_builder,
+    }
 }
