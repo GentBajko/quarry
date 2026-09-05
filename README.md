@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="#step-1-give-your-repos-something-worth-copying"><img
+  <a href="https://github.com/GentBajko/capstone"><img
     src="https://img.shields.io/badge/pairs%20with-Capstone-A96A38?style=flat-square"
     alt="Designed to be used with Capstone"></a>
   <a href="#install"><img
@@ -33,9 +33,9 @@
 </p>
 
 <p align="center">
-  Capstone documents each repo in place, beside the code it describes.
-  quarry copies those references into a single git repository and indexes
-  them. What comes back is the answer that spans repos: who consumes what
+  <a href="https://github.com/GentBajko/capstone">Capstone</a> documents each repo in place, beside the code
+  it describes. quarry copies those references into a single git repository
+  and indexes them. What comes back is the answer that spans repos: who consumes what
   this one produces, what breaks if it changes, what a contract actually
   says. quarry writes no documentation and runs no model.
 </p>
@@ -82,7 +82,7 @@ by scenario, and `09-interfaces.md`, the chapter that declares what the
 repo produces and consumes. That last one is what makes `deps` and `path`
 work at all.
 
-This is not decoration. quarry's requirements *are* Capstone's output
+This is not decoration. quarry's requirements *are* [Capstone](https://github.com/GentBajko/capstone)'s output
 shape: `quarry add` refuses a repo with no `00-index.md`, every result's
 date comes from a `generated_date` stamp, and edges come from the
 interfaces chapter. Anything else works only if you reproduce that shape
@@ -271,14 +271,14 @@ for a day says so before it answers.
 Exit codes: `0` answered or nothing to do, `1` refused, `2` something
 external failed.
 
-## With Capstone
+## With [Capstone](https://github.com/GentBajko/capstone)
 
 The two halves are meant to be run together, and the split between them is
-the whole design: **Capstone generates, quarry distributes.** Capstone
-reads code with a model and writes each repo's docs in place. quarry
-copies those pages at one commit, indexes them, and answers — no model, no
-service, nothing to keep running. Neither half does the other's job, which
-is why an import is deterministic enough for two machines to race on it.
+the whole design. [Capstone](https://github.com/GentBajko/capstone) reads code with a
+model and writes each repo's docs in place. quarry copies those pages at
+one commit, indexes them, and answers — no model, no service, nothing to
+keep running. Generation and distribution never mix, which is why an
+import is deterministic enough for two machines to race on it.
 
 <p align="center">
   <img src="assets/capstone.svg" width="680"
@@ -286,7 +286,7 @@ is why an import is deterministic enough for two machines to race on it.
 </p>
 
 What that buys you is the loop in the diagram: a feature run in one repo
-reaches for another repo's contract **before writing code**. Capstone's
+reaches for another repo's contract **before writing code**. [Capstone](https://github.com/GentBajko/capstone)'s
 `groom` and `plan` call `quarry docs deps` and `quarry docs section` when
 a feature touches paths covered by `09-interfaces.md`. The constraint
 lands in the plan as a citation, rather than in code review a week later.
@@ -299,10 +299,10 @@ interviews can ask what already runs here and get an answer instead of a
 guess. An internal service that already does the job is a dependency you
 never take.
 
-Without Capstone, quarry still runs: point it at any `docs/` folder that
-carries `00-index.md` and `generated_date` stamps, and declare edges with
-the two frontmatter keys above. You will be hand-maintaining the shape
-Capstone produces for free.
+Without [Capstone](https://github.com/GentBajko/capstone), quarry still runs: point it at any `docs/` folder
+that carries `00-index.md` and `generated_date` stamps, and declare edges
+with the two frontmatter keys above. You will be hand-maintaining the
+shape [Capstone](https://github.com/GentBajko/capstone) produces for free.
 
 ---
 
@@ -381,7 +381,7 @@ ones in daily use.
 
 quarry reads whatever `docs/capstone/` holds and does not care which tool
 wrote it. Everything it assumes about that folder still comes from
-Capstone: an index page, dated frontmatter, an interfaces chapter. Running
+[Capstone](https://github.com/GentBajko/capstone): an index page, dated frontmatter, an interfaces chapter. Running
 it against hand-written docs works, and is more maintenance than it sounds
 like.
 
