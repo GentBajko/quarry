@@ -112,3 +112,57 @@ fn s6_unparsable_frontmatter_is_a_warning_and_the_page_still_indexes() {
 fn it_list(w: &World) -> std::process::Output {
     w.run(&["docs", "list", "ingest-api"])
 }
+
+#[test]
+fn s6_a_page_with_only_tables_declares_the_same_edges() {
+    let w = world();
+    assert!(w.run(&["init", "--url", &w.docs_url]).status.success());
+    w.write_docs(&[
+        ("00-index.md", &index_page("2026-09-04")),
+        (
+            "09-interfaces.md",
+            "---\ngenerated_date: 2026-09-04\n---\n\n## Produces\n\n| Kind | Name | To | Site |\n|---|---|---|---|\n| SQS | file-ingest | [record-store](../record-store/09-interfaces.md) | `src/publish.py:1` |\n\n## Consumes\n\n| Kind | Name | From |\n|---|---|---|\n| http | GET /customers/{id} | identity-api |\n",
+        ),
+    ]);
+    w.commit_push("docs");
+    assert!(w.run(&["add"]).status.success());
+
+    let show = w.run(&["docs", "show", "ingest-api"]);
+    let text = stdout(&show);
+    assert!(
+        text.contains("produces: sqs file-ingest -> record-store"),
+        "{text}"
+    );
+    assert!(
+        text.contains("consumes: http GET /customers/{id} <- identity-api"),
+        "{text}"
+    );
+
+    let deps = w.run(&["docs", "deps", "ingest-api", "--downstream"]);
+    assert!(
+        stdout(&deps).contains("record-store"),
+        "{}",
+        stdout(&deps)
+    );
+}
+
+#[test]
+fn s6_a_documented_example_table_declares_nothing() {
+    let w = world();
+    assert!(w.run(&["init", "--url", &w.docs_url]).status.success());
+    w.write_docs(&[
+        ("00-index.md", &index_page("2026-09-04")),
+        (
+            "01-architecture.md",
+            "---\ngenerated_date: 2026-09-04\n---\n\n## Produces\n\nHow to declare an edge:\n\n| Kind | Name | To |\n|---|---|---|\n| sqs | example | somewhere |\n",
+        ),
+    ]);
+    w.commit_push("docs");
+    assert!(w.run(&["add"]).status.success());
+    let out = w.run(&["docs", "deps", "ingest-api", "--downstream"]);
+    assert!(
+        stdout(&out).contains("no edges declared"),
+        "{}",
+        stdout(&out)
+    );
+}

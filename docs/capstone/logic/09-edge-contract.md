@@ -18,8 +18,11 @@ Cross-repo edges are read from two frontmatter keys. Quarry publishes the shape;
 
 ## Steps
 
-1. Keys: `produces` and `consumes`, each a list, in the YAML frontmatter of any `.md` under a repo folder.
-2. Entry fields:
+1. Two accepted forms per page, checked in order:
+   - **Frontmatter keys** `produces` and `consumes`, each a list, on any `.md` under a repo folder.
+   - **Tables**, when the page carries neither key and its filename is `09-interfaces.md`: the rows under a `## Produces` or `## Consumes` heading, columns matched by name (`Kind`, `Name`, `To`/`From`/`Repo`, optional `Site`; `Endpoint` is accepted for `Name`). Cells are read after stripping backticks and markdown link syntax, so `[record-store](../record-store/09-interfaces.md)` yields `record-store`. `\|` inside a cell is a literal pipe. Tables inside fenced blocks are never read, and neither is any table on another page: a chapter documenting the format declares nothing.
+   - A page with both keys and tables uses the keys, so a generator that emits only one form never has a mirror to drift.
+2. Entry fields (frontmatter form; the table columns carry the same set):
 
    | Field | Required | Meaning |
    | --- | --- | --- |
@@ -39,7 +42,10 @@ Cross-repo edges are read from two frontmatter keys. Quarry publishes the shape;
 | Point | Rule |
 | --- | --- |
 | valid entry | edge |
-| missing required field | skipped + warning |
+| missing required field, or a renamed column | skipped + warning naming the field |
+| table on a page other than `09-interfaces.md` | ignored, no warning: it is prose |
+| table inside a fenced block | ignored |
+| page with both frontmatter and tables | frontmatter wins |
 | one-sided declaration | edge, `declared_by` set; `deps` human output appends `(declared by <side> only)` |
 | other repo missing | edge, `missing: true`; human output `(not in quarry)` |
 | `kind` differs in case between sides | same edge (lowercased) |
@@ -59,7 +65,7 @@ None; edges are recomputed on every rebuild.
 ## Invariants
 
 - The edge table contains no entry lacking `from`, `to`, `kind`, `name`.
-- Edge direction is never inferred from prose; only frontmatter counts.
+- Edge direction is never inferred from prose: it comes from the frontmatter key, or from the heading the table sits under.
 
 ## Outcomes & side effects
 

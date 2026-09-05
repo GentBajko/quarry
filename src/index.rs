@@ -245,7 +245,8 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                         .warnings
                         .push(format!("{name}/{relative}: over 5 MB, body not indexed"));
                 }
-                let (edges, warnings) = frontmatter::edges_of(&parsed.fields);
+                let (edges, warnings) =
+                    frontmatter::edges_of(&relative, &parsed.fields, &parsed.body);
                 for warning in warnings {
                     report
                         .warnings
@@ -347,6 +348,11 @@ pub(crate) fn scan_repo_dir(dir: &Path) -> Result<RepoScan> {
         scan.origin = stamp.origin;
     }
     for page in markdown_files(dir)? {
+        let relative = page
+            .strip_prefix(dir)
+            .unwrap_or(&page)
+            .to_string_lossy()
+            .replace('\\', "/");
         let text = fs::read_to_string(&page).unwrap_or_default();
         let parsed = frontmatter::parse(&text);
         scan.pages += 1;
@@ -355,7 +361,7 @@ pub(crate) fn scan_repo_dir(dir: &Path) -> Result<RepoScan> {
         {
             scan.newest_generated_date = Some(date.to_string());
         }
-        let (edges, _) = frontmatter::edges_of(&parsed.fields);
+        let (edges, _) = frontmatter::edges_of(&relative, &parsed.fields, &parsed.body);
         for edge in edges {
             if edge.produces {
                 scan.produces += 1;

@@ -66,7 +66,19 @@ once. `quarry init` is a no-op when `.quarry/.config` is committed.
 
 ## Cross-repo edges
 
-Edges come from two frontmatter keys on any page in a repo's folder:
+Edges come from a repo's `09-interfaces.md`, written as tables:
+
+```markdown
+## Produces
+
+| Kind | Name | To | Site |
+|---|---|---|---|
+| sqs | file-ingest | [record-store](../record-store/09-interfaces.md) | `src/publish/sqs.py:57` |
+```
+
+Columns are matched by name; backticks and link syntax are stripped from cells. Tables are read only on that page and never inside a fenced block, so documentation about the format declares nothing.
+
+Two frontmatter keys do the same job on any page, for generators that would rather emit data than markdown, and win when a page has both:
 
 ```yaml
 produces:
@@ -80,10 +92,11 @@ consumes:
     from: identity-api
 ```
 
-`kind` is free-form and lowercased; `name` and `to`/`from` are required. Either side may
-declare an edge; when both do, quarry reports `declared_by: both`. A target that is not
-in the docs repo is kept and marked `(not in quarry)` rather than dropped, so a broken
-link stays visible. Repos without these keys are still fully searchable.
+`kind` is free-form and lowercased; `name` and `to`/`from` are required in either form.
+Either side may declare an edge; when both do, quarry reports `declared_by: both`. A
+target that is not in the docs repo is kept and marked `(not in quarry)` rather than
+dropped, so a broken link stays visible. Repos declaring no edges at all are still fully
+searchable.
 
 ## What lands where
 

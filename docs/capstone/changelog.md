@@ -5,6 +5,26 @@ capstone_version: 5.2.1
 
 # Changelog
 
+## 2026-09-05 - logic: 09-edge-contract
+key: logic/09-edge-contract@Q19
+
+- `logic/09-edge-contract.md`: a second accepted form added. Tables under `## Produces` / `## Consumes` on a page named `09-interfaces.md` declare edges when the page carries no frontmatter keys; frontmatter wins when both are present.
+- Decision: columns matched by name, cells stripped of backticks and markdown link syntax, `\|` a literal pipe.
+- Decision: tables are read on that filename only and never inside a fenced block, so a chapter documenting the format declares nothing.
+- Reason: the mirrored form let the table and the frontmatter disagree silently, with quarry believing one and the reader the other.
+- Rejected: replacing frontmatter with tables. Positional columns rename silently, optional fields need new columns everywhere, and a non-Capstone generator would have to emit escaped markdown.
+- Source: `src/frontmatter.rs` table reader, 6 unit tests and 2 integration tests, including the documented-example case that caught the prose hazard.
+
+## 2026-09-05 - mockup: capstone-changes
+key: mockup/capstone-changes@Q19
+
+- `capstone-changes.md`: the seven Capstone-side changes written down as a durable output, replacing the interview-only record from the Q17 scope split.
+- Decision: `changelog.d/` fragments folded into `changelog.md` by any run that already writes the docs area; `map check` reports leftovers instead of folding.
+- Decision: archiving moves keys with their bodies into `changelog-<YYYY>.md`, rather than stripping bodies and leaving keys behind.
+- Reason recorded: unfolded fragments would put ~50-100 pages per repo per year into quarry's index; folded, the changelog costs 1-2 pages per repo against a ~5,000-page budget.
+- Rejected: deleting old entries. `implement` deletes a feature folder on the strength of its entry and `feature` allocates `<NN>` from `implement/*` keys.
+- Recorded as contracts quarry depends on: backticked `path:line` pointers, and `generated_date` in every page's frontmatter.
+
 ## 2026-09-05 - build: code
 key: build/code@Q1
 

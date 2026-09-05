@@ -74,7 +74,23 @@ pub(crate) fn parse(text: &str) -> Parsed {
     }
 }
 
-pub(crate) fn edges_of(fields: &Map<String, Value>) -> (Vec<EdgeDecl>, Vec<String>) {
+pub(crate) const INTERFACES_PAGE: &str = "09-interfaces.md";
+
+pub(crate) fn edges_of(
+    path: &str,
+    fields: &Map<String, Value>,
+    body: &str,
+) -> (Vec<EdgeDecl>, Vec<String>) {
+    if fields.contains_key("produces") || fields.contains_key("consumes") {
+        return edges_from_frontmatter(fields);
+    }
+    if path.rsplit('/').next() == Some(INTERFACES_PAGE) {
+        return edges_from_tables(body);
+    }
+    (Vec::new(), Vec::new())
+}
+
+fn edges_from_frontmatter(fields: &Map<String, Value>) -> (Vec<EdgeDecl>, Vec<String>) {
     let mut edges = Vec::new();
     let mut warnings = Vec::new();
     for (key, produces) in [("produces", true), ("consumes", false)] {
@@ -106,6 +122,134 @@ fn edge_entry(item: &Value, key: &str, produces: bool) -> std::result::Result<Ed
         .ok_or_else(|| "missing 'name'".to_string())?;
     let other =
         string_field(map, other_key).ok_or_else(|| format!("missing '{other_key}' in {key}"))?;
+    Ok(EdgeDecl {
+        other,
+        kind: kind.to_ascii_lowercase(),
+        name,
+        produces,
+    })
+}
+
+fn edges_from_tables(body: &str) -> (Vec<EdgeDecl>, Vec<String>) {
+    let mut edges = Vec::new();
+    let mut warnings = Vec::new();
+    for section in sections_of(body) {
+        let produces = match section.normalized.as_str() {
+            "produces" => true,
+            "consumes" => false,
+            _ => continue,
+        };
+        let Some(table) = table_of(&section.body) else {
+            continue;
+        };
+        let other_key = if produces { "to" } else { "from" };
+        for (row, cells) in table.rows.iter().enumerate() {
+            match table_entry(&table.headers, cells, other_key, produces) {
+                Ok(edge) => edges.push(edge),
+                Err(reason) => warnings.push(format!(
+                    "{} table row {} {reason}",
+                    section.heading,
+                    row + 1
+                )),
+            }
+        }
+    }
+    (edges, warnings)
+}
+
+struct Table {
+    headers: Vec<String>,
+    rows: Vec<Vec<String>>,
+}
+
+fn table_of(body: &str) -> Option<Table> {
+    let unfenced = strip_fences(body);
+    let mut lines = unfenced
+        .into_iter()
+        .skip_while(|l| !l.trim_start().starts_with('|'));
+    let headers: Vec<String> = split_row(lines.next()?)
+        .into_iter()
+        .map(|c| c.to_lowercase())
+        .collect();
+    let separator = lines.next()?;
+    if !separator.trim_start().starts_with('|') || !separator.contains('-') {
+        return None;
+    }
+    let mut rows = Vec::new();
+    for line in lines {
+        if !line.trim_start().starts_with('|') {
+            break;
+        }
+        rows.push(split_row(line));
+    }
+    Some(Table { headers, rows })
+}
+
+fn strip_fences(body: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut fence: Option<&str> = None;
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        let marker = if trimmed.starts_with("```") {
+            Some("```")
+        } else if trimmed.starts_with("~~~") {
+            Some("~~~")
+        } else {
+            None
+        };
+        match (marker, fence) {
+            (Some(m), None) => fence = Some(m),
+            (Some(m), Some(open)) if m == open => fence = None,
+            _ => {
+                if fence.is_none() {
+                    out.push(line);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn split_row(line: &str) -> Vec<String> {
+    line.trim()
+        .trim_start_matches('|')
+        .trim_end_matches('|')
+        .replace("\\|", "\u{0}")
+        .split('|')
+        .map(|cell| clean_cell(&cell.replace('\u{0}', "|")))
+        .collect()
+}
+
+fn clean_cell(cell: &str) -> String {
+    let mut text = cell.trim().trim_matches('`').trim().to_string();
+    if let Some(open) = text.find('[')
+        && let Some(close) = text[open..].find("](")
+    {
+        text = text[open + 1..open + close].to_string();
+    }
+    text.trim().to_string()
+}
+
+fn table_entry(
+    headers: &[String],
+    cells: &[String],
+    other_key: &str,
+    produces: bool,
+) -> std::result::Result<EdgeDecl, String> {
+    let cell = |name: &str| -> Option<String> {
+        let index = headers.iter().position(|h| h == name)?;
+        cells
+            .get(index)
+            .map(|c| c.trim().to_string())
+            .filter(|c| !c.is_empty())
+    };
+    let kind = cell("kind").ok_or_else(|| "has no 'kind'".to_string())?;
+    let name = cell("name")
+        .or_else(|| cell("endpoint"))
+        .ok_or_else(|| "has no 'name'".to_string())?;
+    let other = cell(other_key)
+        .or_else(|| cell("repo"))
+        .ok_or_else(|| format!("has no '{other_key}'"))?;
     Ok(EdgeDecl {
         other,
         kind: kind.to_ascii_lowercase(),
@@ -223,7 +367,7 @@ mod tests {
     #[test]
     fn s6_edges_carry_direction_and_lowercased_kind() {
         let parsed = parse(PAGE);
-        let (edges, warnings) = edges_of(&parsed.fields);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(edges.len(), 2);
         assert_eq!(edges[0].kind, "sqs");
@@ -236,7 +380,7 @@ mod tests {
     #[test]
     fn s6_entry_missing_a_required_field_is_skipped_with_a_warning() {
         let parsed = parse("---\nproduces:\n  - kind: sqs\n    name: x\n---\nbody\n");
-        let (edges, warnings) = edges_of(&parsed.fields);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
         assert!(edges.is_empty());
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("missing 'to'"), "{warnings:?}");
@@ -247,6 +391,71 @@ mod tests {
         let parsed = parse("---\na: [1,\n---\nbody\n");
         assert!(parsed.warning.is_some());
         assert_eq!(parsed.body, "body\n");
+    }
+
+    const TABLE_PAGE: &str = "---\ngenerated_date: 2026-09-04\n---\n\n## Produces\n\n| Kind | Name | To | Site |\n|---|---|---|---|\n| SQS | file-ingest | [record-store](../record-store/09-interfaces.md) | `src/publish/sqs.py:57` |\n\n## Consumes\n\n| Kind | Name | From | Site |\n|---|---|---|---|\n| http | GET /customers/{id} | identity-api | `src/clients/customers.py:12` |\n";
+
+    #[test]
+    fn s6_tables_declare_edges_when_frontmatter_does_not() {
+        let parsed = parse(TABLE_PAGE);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0].kind, "sqs");
+        assert_eq!(edges[0].other, "record-store");
+        assert_eq!(edges[0].name, "file-ingest");
+        assert!(edges[0].produces);
+        assert_eq!(edges[1].other, "identity-api");
+        assert_eq!(edges[1].name, "GET /customers/{id}");
+        assert!(!edges[1].produces);
+    }
+
+    #[test]
+    fn s6_frontmatter_wins_when_a_page_has_both() {
+        let both = format!(
+            "---\nproduces:\n  - kind: kafka\n    name: only-this\n    to: warehouse\n---\n{}",
+            parse(TABLE_PAGE).body
+        );
+        let parsed = parse(&both);
+        let (edges, _) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].name, "only-this");
+    }
+
+    #[test]
+    fn s6_tables_outside_the_interfaces_page_are_prose() {
+        let parsed = parse(TABLE_PAGE);
+        let (edges, warnings) = edges_of("01-architecture.md", &parsed.fields, &parsed.body);
+        assert!(edges.is_empty(), "{edges:?}");
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn s6_a_renamed_column_is_a_warning_not_a_silent_zero() {
+        let page = "---\ngenerated_date: 2026-09-04\n---\n\n## Produces\n\n| Kind | Name | Target |\n|---|---|---|\n| sqs | file-ingest | record-store |\n";
+        let parsed = parse(page);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert!(edges.is_empty());
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("has no 'to'"), "{warnings:?}");
+    }
+
+    #[test]
+    fn s6_an_escaped_pipe_survives_the_split() {
+        let page = "---\ngenerated_date: 2026-09-04\n---\n\n## Produces\n\n| Kind | Name | To |\n|---|---|---|\n| http | GET /a\\|b | other |\n";
+        let parsed = parse(page);
+        let (edges, _) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].name, "GET /a|b");
+    }
+
+    #[test]
+    fn s6_a_table_in_a_fenced_block_is_not_read() {
+        let page = "---\ngenerated_date: 2026-09-04\n---\n\n## Produces\n\n```\n| Kind | Name | To |\n|---|---|---|\n| sqs | example | somewhere |\n```\n";
+        let parsed = parse(page);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert!(edges.is_empty(), "{edges:?}");
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]
