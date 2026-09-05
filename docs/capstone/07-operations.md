@@ -27,6 +27,7 @@ No containers, no daemons, no scheduled jobs. The source-repo CI job (`mockup/05
 | --- | --- | --- | --- |
 | `QUARRY_DOCS_REPO` | unset | `config::resolve` (clap `env`) | docs repo URL when no `.config` (S12) |
 | `QUARRY_DOCS_DIR` | `docs/capstone` | `config::resolve` | docs folder in the source repo |
+| `QUARRY_DEFAULT_BRANCH` | derived | `config::resolve` | the branch `update` imports from, when `origin/HEAD` does not say |
 | `--json` | off | `Context`, `output` | machine output (S13) |
 | `--verbose` | off | `gitcmd::Git::run` | echo each git command to stderr |
 | `--force` | off | `commands::init`, `commands::update` | relink (S12) / import over a diverged stamp (S1) |

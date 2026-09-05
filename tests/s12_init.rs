@@ -188,3 +188,72 @@ fn s12_a_greenfield_repo_can_read_the_quarry_before_it_contributes() {
     assert_eq!(code(&list), 0, "{}", stderr(&list));
     assert!(stdout(&list).contains("ingest-api"), "{}", stdout(&list));
 }
+
+#[test]
+fn s12_a_master_repo_is_recorded_as_master() {
+    let w = world();
+    let repo = common::new_source_on(&w.base(), "legacy-api", "master");
+    let out = w.run_in(&repo, &["init", "--url", &w.docs_url]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let config = std::fs::read_to_string(repo.join(".quarry/.config")).expect("config");
+    assert!(
+        config.contains("\"default_branch\": \"master\""),
+        "{config}"
+    );
+}
+
+#[test]
+fn s12_a_master_repo_imports_without_being_told() {
+    let w = world();
+    let repo = common::new_source_on(&w.base(), "legacy-api", "master");
+    assert!(
+        w.run_in(&repo, &["init", "--url", &w.docs_url])
+            .status
+            .success()
+    );
+    w.write_docs_in(&repo, &[("00-index.md", &index_page("2026-09-04"))]);
+    w.git(&repo, &["add", "-A"]);
+    w.git(&repo, &["commit", "--quiet", "-m", "docs"]);
+    assert!(
+        w.git(&repo, &["push", "--quiet", "origin", "master"])
+            .status
+            .success()
+    );
+    let out = w.run_in(&repo, &["add"]);
+    assert_eq!(code(&out), 0, "{}\n{}", stdout(&out), stderr(&out));
+    assert!(
+        w.remote_files()
+            .contains(&"legacy-api/00-index.md".to_string())
+    );
+}
+
+#[test]
+fn s12_the_branch_flag_wins_and_survives_a_reinit() {
+    let w = world();
+    let out = w.run(&["init", "--url", &w.docs_url, "--default-branch", "trunk"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let path = w.source.join(".quarry/.config");
+    assert!(
+        std::fs::read_to_string(&path)
+            .expect("config")
+            .contains("\"default_branch\": \"trunk\""),
+    );
+    assert!(w.run(&["init", "--url", &w.docs_url]).status.success());
+    let after = std::fs::read_to_string(&path).expect("config");
+    assert!(
+        after.contains("\"default_branch\": \"trunk\""),
+        "a reinit clobbered it: {after}"
+    );
+}
+
+#[test]
+fn s12_an_unknown_branch_says_how_to_fix_it() {
+    let w = world();
+    let out = w.run(&["init", "--url", &w.docs_url, "--default-branch", "nope"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("--default-branch"),
+        "{}",
+        stdout(&out)
+    );
+}

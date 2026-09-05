@@ -5,6 +5,15 @@ capstone_version: 5.2.1
 
 # Changelog
 
+## 2026-09-05 - logic: 02-init-and-config
+key: logic/02-init-and-config@Q11
+
+- `logic/02-init-and-config.md`: `default_branch` gains the same precedence as the other two settings, flag > env > stored > derived.
+- Fixed: `init` re-derived the branch on every run, so a stored or hand-set value was clobbered by the next CI `init`.
+- Decision: derivation order is `origin/HEAD`, then `git ls-remote --symref origin HEAD`, then the first of main, master, trunk, develop with a ref, then `main`. A repo on master no longer has to be told.
+- Decision: `init` notes the missing ref and names `--default-branch` rather than refusing, since the branch may exist later.
+- Source: `--default-branch` and `QUARRY_DEFAULT_BRANCH`; 6 tests including a master-based repo importing end to end.
+
 ## 2026-09-05 - logic: 09-edge-contract
 key: logic/09-edge-contract@Q19
 

@@ -118,5 +118,55 @@ pub(crate) fn default_branch(git: &Git) -> String {
             return branch.to_string();
         }
     }
+    // origin/HEAD is unset on plenty of clones, so ask the remote itself,
+    // then fall back to whichever conventional name actually has a ref.
+    if let Ok(out) = git.run_unchecked(&["ls-remote", "--symref", "origin", "HEAD"])
+        && out.status.success()
+        && let Some(branch) = symref_branch(&String::from_utf8_lossy(&out.stdout))
+    {
+        return branch;
+    }
+    for candidate in ["main", "master", "trunk", "develop"] {
+        if remote_branch_known(git, candidate) {
+            return candidate.to_string();
+        }
+    }
     "main".to_string()
+}
+
+fn symref_branch(output: &str) -> Option<String> {
+    for line in output.lines() {
+        if let Some(rest) = line.strip_prefix("ref: refs/heads/")
+            && let Some((branch, _)) = rest.split_once('\t')
+            && !branch.is_empty()
+        {
+            return Some(branch.to_string());
+        }
+    }
+    None
+}
+
+pub(crate) fn remote_branch_known(git: &Git, branch: &str) -> bool {
+    matches!(
+        git.run_unchecked(&["rev-parse", "--verify", "--quiet", &format!("origin/{branch}")]),
+        Ok(out) if out.status.success()
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::symref_branch;
+
+    #[test]
+    fn s12_symref_output_names_the_remote_default() {
+        let out = "ref: refs/heads/master\tHEAD\n9f1c\tHEAD\n";
+        assert_eq!(symref_branch(out).unwrap(), "master");
+    }
+
+    #[test]
+    fn s12_symref_output_without_a_ref_line_yields_nothing() {
+        assert_eq!(symref_branch("9f1c\tHEAD\n"), None);
+    }
 }

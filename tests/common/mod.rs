@@ -30,6 +30,10 @@ pub fn world() -> World {
 }
 
 fn bare(base: &Path, name: &str) {
+    bare_on(base, name, "main");
+}
+
+fn bare_on(base: &Path, name: &str, branch: &str) {
     let path = base.join("remotes").join(format!("{name}.git"));
     git(
         base,
@@ -38,7 +42,7 @@ fn bare(base: &Path, name: &str) {
             "init",
             "--quiet",
             "--bare",
-            "--initial-branch=main",
+            &format!("--initial-branch={branch}"),
             &path.to_string_lossy(),
         ],
     );
@@ -55,15 +59,24 @@ fn url(base: &Path, name: &str) -> String {
 
 /// A fresh source repo wired to its own bare origin, with one commit on main.
 pub fn new_source(base: &Path, name: &str) -> PathBuf {
-    bare(base, name);
+    new_source_on(base, name, "main")
+}
+
+/// A source repo whose default branch is whatever the caller names.
+pub fn new_source_on(base: &Path, name: &str, branch: &str) -> PathBuf {
+    bare_on(base, name, branch);
     let path = base.join(name);
     std::fs::create_dir_all(&path).expect("source dir");
-    git(base, &path, &["init", "--quiet", "--initial-branch=main"]);
+    git(
+        base,
+        &path,
+        &["init", "--quiet", &format!("--initial-branch={branch}")],
+    );
     std::fs::write(path.join("README.md"), "# repo\n").expect("readme");
     git(base, &path, &["add", "-A"]);
     git(base, &path, &["commit", "--quiet", "-m", "init"]);
     git(base, &path, &["remote", "add", "origin", &url(base, name)]);
-    git(base, &path, &["push", "--quiet", "origin", "main"]);
+    git(base, &path, &["push", "--quiet", "origin", branch]);
     git(base, &path, &["remote", "set-head", "origin", "-a"]);
     path
 }

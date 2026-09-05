@@ -19,8 +19,8 @@ mode: prescriptive
 
 ## Steps
 
-1. Resolve the docs repo URL and docs dir. Precedence: flag > env var (`QUARRY_DOCS_REPO`, `QUARRY_DOCS_DIR`) > existing `.quarry/.config`. Nothing set and stdin is a TTY → prompt (`mockup/02-init.md`). Nothing set and no TTY → refuse, naming the two flags (exit 1).
-2. Resolve `default_branch` from `origin/HEAD` (`git symbolic-ref refs/remotes/origin/HEAD`). Unset → `main`, with a warning line.
+1. Resolve the docs repo URL, docs dir and default branch. Precedence: flag > env var (`QUARRY_DOCS_REPO`, `QUARRY_DOCS_DIR`, `QUARRY_DEFAULT_BRANCH`) > existing `.quarry/.config` > derived. Nothing set and stdin is a TTY → prompt for the URL (`mockup/02-init.md`). Nothing set and no TTY → refuse, naming the two flags (exit 1).
+2. Derive `default_branch` only when neither a flag nor a stored value gives one: `origin/HEAD`, then `git ls-remote --symref origin HEAD`, then the first of `main`, `master`, `trunk`, `develop` that has a ref, then `main`. A stored value is never re-derived, so a re-run cannot clobber an explicit choice.
 3. If `.quarry/.config` exists and its `url` differs from the resolved one and `--force` is absent → refuse: `already linked to <stored url>; use --force to relink` (exit 1). With `--force`: delete the clone folder, continue.
 4. Write `.quarry/.config` with `url`, `docs_dir`, `default_branch`. Optional `permalink_template` (S4) is preserved when present.
 5. Write `.quarry/.gitignore` containing exactly the clone folder name (last URL path segment minus `.git`). Rewritten every run.
@@ -32,7 +32,8 @@ mode: prescriptive
 
 | Point | Rule |
 | --- | --- |
-| config present, same URL | keep; ensure clone; exit 0 |
+| config present, same URL | keep, including its `default_branch`; ensure clone; exit 0 |
+| `--default-branch` given | wins over the stored and the derived value |
 | config present, different URL | refuse unless `--force` |
 | config absent, values from flags/env | write, clone |
 | config absent, interactive | prompt |
@@ -44,6 +45,7 @@ mode: prescriptive
 | Case | Behaviour |
 | --- | --- |
 | clone fails (URL, network, auth) | S11: git's error, exit 2, `.config` already written stays |
+| no `origin/<default_branch>` in this repo | a note naming `--default-branch`; the config is still written, since the branch may exist later |
 | not a git repo / no `origin` | exit 1, nothing written |
 | source repo's own `.gitignore` ignores `.quarry/` wholesale | allowed; `.config` is then not committed and CI must pass flags or env |
 | `--docs-dir` outside the repo (absolute or `..`) | refuse, exit 1 |

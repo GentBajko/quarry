@@ -35,6 +35,9 @@ pub(crate) enum Command {
         /// The docs folder in this repo.
         #[arg(long, env = "QUARRY_DOCS_DIR")]
         docs_dir: Option<String>,
+        /// This repo's default branch, when origin/HEAD does not say.
+        #[arg(long, env = "QUARRY_DEFAULT_BRANCH")]
+        default_branch: Option<String>,
         /// Relink to a different docs repo.
         #[arg(long)]
         force: bool,
@@ -132,8 +135,15 @@ pub(crate) fn run(cli: &Cli) -> Result<Response> {
         Command::Init {
             url,
             docs_dir,
+            default_branch,
             force,
-        } => commands::init(&ctx, given(url), given(docs_dir), *force),
+        } => commands::init(
+            &ctx,
+            given(url),
+            given(docs_dir),
+            given(default_branch),
+            *force,
+        ),
         Command::Add => commands::add(&ctx),
         Command::Update { force } => commands::update(&ctx, *force),
         Command::Sync => commands::sync(&ctx),

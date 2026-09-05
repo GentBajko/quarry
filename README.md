@@ -226,7 +226,7 @@ you can see. Repos declaring no edges at all are still fully searchable.
 
 | Command | What it does |
 | --- | --- |
-| `quarry init [--url] [--docs-dir] [--force]` | Link this repo to a docs repo, write `.quarry/`, clone it shallowly. `--force` relinks to a different docs repo |
+| `quarry init [--url] [--docs-dir] [--default-branch] [--force]` | Link this repo to a docs repo, write `.quarry/`, clone it shallowly. `--force` relinks to a different docs repo |
 | `quarry add` | Register this repo in the docs repo and import its docs. Running it twice is a no-op |
 | `quarry update [--force]` | Copy the docs at `HEAD` into the docs repo, commit, push. `--force` imports over a diverged or unreachable stamp |
 | `quarry sync` | Pull the docs repo clone, then rebuild the index |
@@ -350,9 +350,17 @@ unless `.quarry/.config` carries a `permalink_template` with `{owner}`,
 }
 ```
 
-`QUARRY_DOCS_REPO` and `QUARRY_DOCS_DIR` stand in for `--url` and
-`--docs-dir` when there is no config yet, which is what makes a fresh CI
-runner work. Precedence is flag, then environment, then the file.
+`QUARRY_DOCS_REPO`, `QUARRY_DOCS_DIR` and `QUARRY_DEFAULT_BRANCH` stand in
+for `--url`, `--docs-dir` and `--default-branch` when there is no config
+yet, which is what makes a fresh CI runner work. Precedence is flag, then
+environment, then the file, then what quarry can work out for itself.
+
+`default_branch` is the branch `update` imports from, and it is the one
+setting quarry guesses. It reads `origin/HEAD`, asks the remote when that
+is unset, and only then falls back to whichever of `main`, `master`,
+`trunk` or `develop` actually has a ref. Pass `--default-branch` once if
+your repo uses something else; a stored value survives every later `init`,
+including the one your CI runs on every job.
 
 The repo's name in the docs repo is the last path segment of its `origin`
 URL and is not configurable. Two repos from different owners claiming one

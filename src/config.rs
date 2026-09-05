@@ -55,8 +55,9 @@ pub(crate) fn write_gitignore(repo_root: &Path, clone_name: &str) -> Result<()> 
 pub(crate) fn resolve(
     url_flag: Option<String>,
     docs_dir_flag: Option<String>,
+    branch_flag: Option<String>,
     existing: Option<&Config>,
-    default_branch: String,
+    derived_branch: String,
 ) -> Result<Config> {
     let url = url_flag
         .or_else(|| existing.map(|c| c.url.clone()))
@@ -69,6 +70,9 @@ pub(crate) fn resolve(
         .or_else(|| existing.map(|c| c.docs_dir.clone()))
         .unwrap_or_else(|| DEFAULT_DOCS_DIR.to_string());
     validate_docs_dir(&docs_dir)?;
+    let default_branch = branch_flag
+        .or_else(|| existing.map(|c| c.default_branch.clone()))
+        .unwrap_or(derived_branch);
     Ok(Config {
         default_branch,
         docs_dir,
@@ -108,6 +112,7 @@ mod tests {
         let c = resolve(
             Some("git@host:a/new.git".into()),
             None,
+            None,
             Some(&existing),
             "main".into(),
         )
@@ -118,7 +123,7 @@ mod tests {
 
     #[test]
     fn s12_no_url_anywhere_refuses() {
-        assert!(resolve(None, None, None, "main".into()).is_err());
+        assert!(resolve(None, None, None, None, "main".into()).is_err());
     }
 
     #[test]
@@ -128,11 +133,46 @@ mod tests {
                 Some("u".into()),
                 Some("../elsewhere".into()),
                 None,
+                None,
                 "main".into()
             )
             .is_err()
         );
-        assert!(resolve(Some("u".into()), Some("/etc".into()), None, "main".into()).is_err());
+        assert!(
+            resolve(
+                Some("u".into()),
+                Some("/etc".into()),
+                None,
+                None,
+                "main".into()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn s12_an_explicit_branch_beats_the_derived_one() {
+        let c = resolve(
+            Some("u".into()),
+            None,
+            Some("trunk".into()),
+            None,
+            "main".into(),
+        )
+        .unwrap();
+        assert_eq!(c.default_branch, "trunk");
+    }
+
+    #[test]
+    fn s12_a_stored_branch_survives_a_reinit() {
+        let existing = Config {
+            default_branch: "master".into(),
+            docs_dir: "docs/capstone".into(),
+            permalink_template: None,
+            url: "u".into(),
+        };
+        let c = resolve(None, None, None, Some(&existing), "main".into()).unwrap();
+        assert_eq!(c.default_branch, "master");
     }
 
     #[test]

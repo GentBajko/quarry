@@ -20,6 +20,7 @@ pub(crate) fn init(
     ctx: &Context,
     url: Option<String>,
     docs_dir: Option<String>,
+    branch: Option<String>,
     force: bool,
 ) -> Result<Response> {
     let existing = ctx.config.clone();
@@ -42,17 +43,14 @@ pub(crate) fn init(
         )));
     }
     let git = ctx.repo_git();
-    let default_branch = gitcmd::default_branch(&git);
-    if ctx.identity.is_some() && default_branch == "main" {
-        let has_head = git
-            .run_unchecked(&["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !has_head {
-            notes.push("origin/HEAD unset; assuming the default branch is `main`".to_string());
-        }
+    let derived = gitcmd::default_branch(&git);
+    let config = config::resolve(url, docs_dir, branch, existing.as_ref(), derived)?;
+    let default_branch = config.default_branch.clone();
+    if ctx.identity.is_some() && !gitcmd::remote_branch_known(&git, &default_branch) {
+        notes.push(format!(
+            "no origin/{default_branch} here; set the right one with quarry init --default-branch <name>"
+        ));
     }
-    let config = config::resolve(url, docs_dir, existing.as_ref(), default_branch.clone())?;
     let relinked = existing.as_ref().is_some_and(|old| old.url != config.url);
     let clone_name = identity::clone_name(&config.url)?;
     if relinked {
