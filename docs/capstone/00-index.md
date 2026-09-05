@@ -35,5 +35,5 @@ Chapter zero of `docs/capstone/`. Prescriptive reference: every chapter carries 
 | [mockup/README.md](mockup/README.md) | product brief; screens, journeys, and the scenario inventory for `logic` |
 | [mockup/](mockup/) | one file per CLI command screen (`01-help.md` … `15-quarry-layout.md`) |
 | [standards.md](standards.md) | binding rules the user set for how code is written here |
-| [implementation.md](implementation.md) | build plan: layout, code sketches, 15-step build order, coverage table (awaiting approval) |
+| [implementation.md](implementation.md) | build plan: layout, code sketches, 15-step build order, coverage table, and the divergences as built |
 | [changelog.md](changelog.md) | append-only ledger of every capstone run, newest first |

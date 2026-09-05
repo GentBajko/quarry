@@ -15,16 +15,6 @@ key: logic/09-edge-contract@Q19
 - Rejected: replacing frontmatter with tables. Positional columns rename silently, optional fields need new columns everywhere, and a non-Capstone generator would have to emit escaped markdown.
 - Source: `src/frontmatter.rs` table reader, 6 unit tests and 2 integration tests, including the documented-example case that caught the prose hazard.
 
-## 2026-09-05 - mockup: capstone-changes
-key: mockup/capstone-changes@Q19
-
-- `capstone-changes.md`: the seven Capstone-side changes written down as a durable output, replacing the interview-only record from the Q17 scope split.
-- Decision: `changelog.d/` fragments folded into `changelog.md` by any run that already writes the docs area; `map check` reports leftovers instead of folding.
-- Decision: archiving moves keys with their bodies into `changelog-<YYYY>.md`, rather than stripping bodies and leaving keys behind.
-- Reason recorded: unfolded fragments would put ~50-100 pages per repo per year into quarry's index; folded, the changelog costs 1-2 pages per repo against a ~5,000-page budget.
-- Rejected: deleting old entries. `implement` deletes a feature folder on the strength of its entry and `feature` allocates `<NN>` from `implement/*` keys.
-- Recorded as contracts quarry depends on: backticked `path:line` pointers, and `generated_date` in every page's frontmatter.
-
 ## 2026-09-05 - build: code
 key: build/code@Q1
 
