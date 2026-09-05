@@ -3,9 +3,9 @@
 </p>
 
 <p align="center">
-  <strong>Your repos already document themselves.</strong><br>
-  quarry puts those docs in one place, indexes them,<br>
-  and answers the question no single repo can.
+  <strong>One face for every repo.</strong><br>
+  Every repo's reference in one place, indexed,<br>
+  so a change in one is a question you can answer.
 </p>
 
 <p align="center">
