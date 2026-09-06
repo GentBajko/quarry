@@ -364,12 +364,15 @@ fn table_entry(
     produces: bool,
 ) -> std::result::Result<EdgeDecl, String> {
     let column = |name: &str| headers.iter().position(|h| h == name);
+    // A lone dash is how a markdown table writes "nothing here", so it reads as
+    // an empty cell. Taken literally it becomes a repo named `-`, and every
+    // edge to it resolves to nothing.
     let cell = |name: &str| -> Option<String> {
         let index = column(name)?;
         cells
             .get(index)
             .map(|c| c.trim().to_string())
-            .filter(|c| !c.is_empty())
+            .filter(|c| !c.is_empty() && c != "-")
     };
     let kind = cell("kind").ok_or_else(|| "has no 'kind'".to_string())?;
     let name = cell("name")
@@ -650,6 +653,17 @@ mod tests {
         let (edges, warnings) = edges_of("01-architecture.md", &parsed.fields, &parsed.body);
         assert!(edges.is_empty(), "{edges:?}");
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn s6_a_dash_cell_is_empty_not_a_repo_named_dash() {
+        let page = "---\ngenerated_date: 2026-09-07\n---\n\n## Produces\n\n| Kind | Name | To | Site |\n|---|---|---|---|\n| http | GET /records | - | - |\n";
+        let parsed = parse(page);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].other, None, "a dash is not a repo");
+        assert_eq!(edges[0].site, None, "a dash is not a path");
     }
 
     #[test]
