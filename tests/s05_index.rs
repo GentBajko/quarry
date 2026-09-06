@@ -41,7 +41,7 @@ fn s5_an_unknown_repo_refuses_with_exit_one() {
 }
 
 #[test]
-fn s5_a_query_pulls_before_it_answers() {
+fn s5_a_query_never_pulls_by_default() {
     let it = wired();
     let other = it.w.other_repo("identity-api");
     it.w.write_docs_in(&other, &[("00-index.md", &index_page("2026-09-02"))]);
@@ -50,52 +50,75 @@ fn s5_a_query_pulls_before_it_answers() {
     let out = it.w.run(&["docs", "list"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(
+        !stdout(&out).contains("identity-api"),
+        "a plain query pulled: {}",
+        stdout(&out)
+    );
+    assert!(it.w.run(&["sync"]).status.success());
+    assert!(stdout(&it.w.run(&["docs", "list"])).contains("identity-api"));
+}
+
+#[test]
+fn s5_the_sync_flag_pulls_before_answering() {
+    let it = wired();
+    let other = it.w.other_repo("identity-api");
+    it.w.write_docs_in(&other, &[("00-index.md", &index_page("2026-09-02"))]);
+    it.w.commit_push_in(&other, "docs");
+    assert!(it.w.run_in(&other, &["add"]).status.success());
+    let out = it.w.run(&["--sync", "docs", "list"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(
         stdout(&out).contains("identity-api"),
-        "a query answered from a stale clone: {}",
+        "--sync answered from a stale clone: {}",
         stdout(&out)
     );
 }
 
 #[test]
-fn s5_offline_answers_from_the_clone_without_pulling() {
+fn s5_sync_on_read_in_the_config_pulls_by_default() {
     let it = wired();
+    let path = it.w.source.join(".quarry/.config");
+    let config = std::fs::read_to_string(&path).expect("config");
+    assert!(
+        !config.contains("sync_on_read"),
+        "off by default is unwritten: {config}"
+    );
+    let flipped = config.replacen("\"url\"", "\"sync_on_read\": true,\n  \"url\"", 1);
+    std::fs::write(&path, flipped).expect("write config");
     let other = it.w.other_repo("identity-api");
     it.w.write_docs_in(&other, &[("00-index.md", &index_page("2026-09-02"))]);
     it.w.commit_push_in(&other, "docs");
     assert!(it.w.run_in(&other, &["add"]).status.success());
-    let out = it.w.run(&["--offline", "docs", "list"]);
-    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let out = it.w.run(&["docs", "list"]);
     assert!(
-        !stdout(&out).contains("identity-api"),
-        "--offline pulled: {}",
+        stdout(&out).contains("identity-api"),
+        "sync_on_read did not pull: {}",
         stdout(&out)
     );
+    let offline = it.w.run(&["--offline", "docs", "show", "identity-api"]);
+    assert_eq!(
+        code(&offline),
+        0,
+        "--offline still answers: {}",
+        stderr(&offline)
+    );
     assert!(
-        stdout(&it.w.run(&["docs", "list"])).contains("identity-api"),
-        "the next online query should see it"
+        it.w.run(&["init", "--url", &it.w.docs_url])
+            .status
+            .success()
+    );
+    let after = std::fs::read_to_string(&path).expect("config");
+    assert!(
+        after.contains("\"sync_on_read\": true"),
+        "a reinit dropped it: {after}"
     );
 }
 
 #[test]
-fn s5_the_offline_env_var_matches_the_flag() {
+fn s5_sync_and_offline_together_are_refused() {
     let it = wired();
-    let other = it.w.other_repo("identity-api");
-    it.w.write_docs_in(&other, &[("00-index.md", &index_page("2026-09-02"))]);
-    it.w.commit_push_in(&other, "docs");
-    assert!(it.w.run_in(&other, &["add"]).status.success());
-    let out = it.w.run_env(&["docs", "list"], &[("QUARRY_OFFLINE", "1")]);
-    assert_eq!(code(&out), 0, "{}", stderr(&out));
-    assert!(
-        !stdout(&out).contains("identity-api"),
-        "QUARRY_OFFLINE pulled: {}",
-        stdout(&out)
-    );
-    let empty = it.w.run_env(&["docs", "list"], &[("QUARRY_OFFLINE", "")]);
-    assert!(
-        stdout(&empty).contains("identity-api"),
-        "an empty QUARRY_OFFLINE should not mean offline: {}",
-        stdout(&empty)
-    );
+    let out = it.w.run(&["--sync", "--offline", "docs", "list"]);
+    assert_eq!(code(&out), 1, "{}", stdout(&out));
 }
 
 #[test]
@@ -167,7 +190,7 @@ fn s5_queries_work_without_the_network() {
     let remote = it.w.base().join("remotes/docs-quarry.git");
     let moved = it.w.base().join("remotes/docs-quarry.gone");
     std::fs::rename(&remote, &moved).expect("move remote");
-    let out = it.w.run(&["docs", "list"]);
+    let out = it.w.run(&["--sync", "docs", "list"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(stdout(&out).contains("ingest-api"), "{}", stdout(&out));
     assert!(
@@ -182,8 +205,14 @@ fn s5_an_unreachable_remote_is_a_note_in_json_not_a_failure() {
     let it = wired();
     let remote = it.w.base().join("remotes/docs-quarry.git");
     std::fs::rename(&remote, it.w.base().join("remotes/docs-quarry.gone")).expect("move remote");
-    let out =
-        it.w.run(&["--json", "docs", "deps", "ingest-api", "--downstream"]);
+    let out = it.w.run(&[
+        "--json",
+        "--sync",
+        "docs",
+        "deps",
+        "ingest-api",
+        "--downstream",
+    ]);
     assert_eq!(code(&out), 0, "{}", stdout(&out));
     let value: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("json");
     assert_eq!(value["ok"], serde_json::Value::Bool(true));

@@ -101,19 +101,6 @@ impl World {
             .expect("run quarry")
     }
 
-    /// Runs the built binary in the default source repo with extra environment.
-    pub fn run_env(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_quarry"));
-        command
-            .args(args)
-            .current_dir(&self.source)
-            .envs(env(&self.base()));
-        for (key, value) in extra {
-            command.env(key, value);
-        }
-        command.output().expect("run quarry")
-    }
-
     /// Runs git in any directory of this world.
     pub fn git(&self, dir: &Path, args: &[&str]) -> Output {
         git(&self.base(), dir, args)

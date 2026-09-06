@@ -448,7 +448,7 @@ fn payload_of(per_target: bool, mut outs: Vec<WriteOut>) -> Payload {
     }
 }
 
-pub(crate) fn check(ctx: &Context, offline: bool) -> Result<Response> {
+pub(crate) fn check(ctx: &Context, sync: bool) -> Result<Response> {
     let config = ctx.config()?.clone();
     let identity = ctx.identity()?.clone();
     let clone = ctx.require_clone()?;
@@ -468,7 +468,7 @@ pub(crate) fn check(ctx: &Context, offline: bool) -> Result<Response> {
     // root index is absent. So the target is named whenever targets exist, not
     // only when there are two or more of them.
     let per_target = !config.targets.is_empty();
-    let refresh_notes = refresh_for_query(ctx, offline);
+    let refresh_notes = refresh_for_query(ctx, sync);
     let opened = index::open_current(ctx)?;
     let mut merged = check::CheckOut {
         repo: identity.name.clone(),
@@ -775,8 +775,8 @@ pub(crate) fn docs_index(ctx: &Context, force: bool) -> Result<Response> {
     })
 }
 
-pub(crate) fn docs_list(ctx: &Context, repo: Option<String>, offline: bool) -> Result<Response> {
-    let notes = refresh_for_query(ctx, offline);
+pub(crate) fn docs_list(ctx: &Context, repo: Option<String>, sync: bool) -> Result<Response> {
+    let notes = refresh_for_query(ctx, sync);
     let opened = index::open_current(ctx)?;
     let meta = meta_with(&opened, notes);
     match repo {
@@ -805,8 +805,8 @@ pub(crate) fn docs_list(ctx: &Context, repo: Option<String>, offline: bool) -> R
     }
 }
 
-pub(crate) fn docs_show(ctx: &Context, repo: &str, offline: bool) -> Result<Response> {
-    let notes = refresh_for_query(ctx, offline);
+pub(crate) fn docs_show(ctx: &Context, repo: &str, sync: bool) -> Result<Response> {
+    let notes = refresh_for_query(ctx, sync);
     let opened = index::open_current(ctx)?;
     Ok(Response {
         meta: meta_with(&opened, notes),
@@ -818,9 +818,9 @@ pub(crate) fn docs_section(
     ctx: &Context,
     repo: &str,
     heading: &str,
-    offline: bool,
+    sync: bool,
 ) -> Result<Response> {
-    let notes = refresh_for_query(ctx, offline);
+    let notes = refresh_for_query(ctx, sync);
     let opened = index::open_current(ctx)?;
     Ok(Response {
         meta: meta_with(&opened, notes),
@@ -833,9 +833,9 @@ pub(crate) fn docs_search(
     term: &str,
     repo: Option<&str>,
     limit: u32,
-    offline: bool,
+    sync: bool,
 ) -> Result<Response> {
-    let notes = refresh_for_query(ctx, offline);
+    let notes = refresh_for_query(ctx, sync);
     let opened = index::open_current(ctx)?;
     Ok(Response {
         meta: meta_with(&opened, notes),
@@ -848,9 +848,9 @@ pub(crate) fn docs_deps(
     repo: &str,
     direction: Direction,
     depth: u32,
-    offline: bool,
+    sync: bool,
 ) -> Result<Response> {
-    let notes = refresh_for_query(ctx, offline);
+    let notes = refresh_for_query(ctx, sync);
     let opened = index::open_current(ctx)?;
     Ok(Response {
         meta: meta_with(&opened, notes),
@@ -858,8 +858,8 @@ pub(crate) fn docs_deps(
     })
 }
 
-pub(crate) fn docs_path(ctx: &Context, from: &str, to: &str, offline: bool) -> Result<Response> {
-    let notes = refresh_for_query(ctx, offline);
+pub(crate) fn docs_path(ctx: &Context, from: &str, to: &str, sync: bool) -> Result<Response> {
+    let notes = refresh_for_query(ctx, sync);
     let opened = index::open_current(ctx)?;
     Ok(Response {
         meta: meta_with(&opened, notes),
@@ -882,13 +882,12 @@ fn meta_with(index: &index::Index, notes: Vec<String>) -> Meta {
     }
 }
 
-/// Pull the docs clone before a read, so a query answers from what the other
-/// repos have pushed rather than from whatever this machine last happened to
-/// fetch. An unreachable remote is a note and never a refusal: the clone is a
-/// complete answer on its own, and a query that fails offline would be worse
-/// than one that answers a few minutes behind.
-fn refresh_for_query(ctx: &Context, offline: bool) -> Vec<String> {
-    if offline || ctx.require_clone().is_err() {
+/// Pull the docs clone before a read when asked to, by `--sync` or by
+/// `sync_on_read` in the config. An unreachable remote is a note and never a
+/// refusal: the clone is a complete answer on its own, and a query that fails
+/// offline would be worse than one that answers a few minutes behind.
+fn refresh_for_query(ctx: &Context, sync: bool) -> Vec<String> {
+    if !sync || ctx.require_clone().is_err() {
         // A missing clone is `open_current`'s refusal to raise, not this one's.
         return Vec::new();
     }

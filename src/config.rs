@@ -24,6 +24,9 @@ pub(crate) struct Config {
     pub(crate) permalink_template: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) targets: Vec<Target>,
+    // Written only when true, so a config that never set it keeps its bytes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) sync_on_read: bool,
     pub(crate) url: String,
 }
 
@@ -119,6 +122,7 @@ pub(crate) fn resolve(
         docs_dir,
         permalink_template: existing.and_then(|c| c.permalink_template.clone()),
         targets,
+        sync_on_read: existing.is_some_and(|c| c.sync_on_read),
         url,
     })
 }
@@ -239,6 +243,7 @@ mod tests {
             docs_dir: "docs/capstone".into(),
             permalink_template: None,
             targets: Vec::new(),
+            sync_on_read: false,
             url: url.into(),
         }
     }
@@ -325,6 +330,7 @@ mod tests {
             docs_dir: "docs/capstone".into(),
             permalink_template: None,
             targets: Vec::new(),
+            sync_on_read: false,
             url: "u".into(),
         };
         let c = resolve(None, None, None, None, Some(&existing), "main".into()).unwrap();

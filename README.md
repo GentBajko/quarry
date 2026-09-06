@@ -118,13 +118,13 @@ Five commands run in a source repo, once each in the places you'd expect:
 quarry init --url git@github.com:acme/docs-quarry.git   # once per repo
 quarry add                                             # register and import
 quarry update                                          # after every merge to main
-quarry sync                                            # pull and reindex on demand; queries do it for you
+quarry sync                                            # pull what other repos pushed
 quarry check                                           # before merging: are consumers' fields still produced
 ```
 
-Eight answer questions, with `--json` on every one. Each pulls the docs
-repo first, so an answer reflects what the other repos have pushed rather
-than whatever this machine last fetched:
+Eight answer questions, from the local index, offline, with `--json` on
+every one. Add `--sync` to pull first, or set `sync_on_read` in the config
+to make every read do so:
 
 ```sh
 quarry docs list                                    # every repo, with page and edge counts
@@ -424,11 +424,10 @@ name; `Required` reads `yes`/`no`, and a table without the column is
 compared on field and type only; types are compared after trimming and
 case-folding.
 
-The check pulls first like every other read, so it compares against what
-the consumers have actually published. In CI it runs right after
-`quarry init`, on pull requests, beside Capstone's `map check`, and blocks
-the merge before a consumer ever sees the change. Pass `--offline` to pin a
-job to the clone it started with. `quarry
+The check reads the clone as last synced, like every other read, so in
+CI it runs right after `quarry init`, on pull requests, beside Capstone's
+`map check`, and blocks the merge before a consumer ever sees the change.
+Add `--sync` to pull first. `quarry
 update` runs the same comparison after every import and reports breaks as
 notes without changing its exit code.
 
@@ -458,9 +457,9 @@ notes without changing its exit code.
 | `quarry docs index [--force]` | Rebuild the local index without touching the network, listing every edge target that resolved to nothing and, when `observed-edges.json` is there, the `observed edges:` count and its generation date |
 
 Every command takes `--json` and prints exactly one JSON document,
-including on failure. Add `--verbose` to see each git command on stderr, and
-`--offline` (or `QUARRY_OFFLINE=1`) to answer from the clone without pulling
-first.
+including on failure. Add `--verbose` to see each git command on stderr.
+`--sync` pulls the docs repo before a read; `--offline` answers from the
+clone even when the config says to pull.
 
 ## Rules worth knowing
 
@@ -479,16 +478,17 @@ the local commit, resets to the remote and redoes the copy, up to three
 times. That is safe because an import is a pure function of
 `(repo, commit)`: two machines produce identical bytes.
 
-**A query pulls before it answers.** Every read command fetches the docs
-repo and rebuilds the index when the clone moved, so a stale answer needs
-someone to have asked for one. `--offline`, or `QUARRY_OFFLINE=1`, skips
-the fetch; `docs index` never fetches, since rebuilding the local index is
-its whole job.
+**Queries never touch the network unless told to.** The index rebuilds
+whenever the clone moves; `sync` pulls, and so does any read given
+`--sync` or run in a repo whose config sets `sync_on_read`. A clone
+unsynced for a day says so before it answers. `docs index` never pulls,
+since rebuilding the local index is its whole job.
 
-**A query still answers when the remote is gone.** An unreachable docs repo
-is a note above the answer, never a failure, so a plane, a tunnel or a
-revoked token costs you freshness rather than the tool. The note names the
-git error, and the clone's age is reported beside it.
+**A read that pulls still answers when the remote is gone.** An
+unreachable docs repo is a note above the answer, never a failure, so a
+plane, a tunnel or a revoked token costs you freshness rather than the
+tool. The note names the git error, and the clone's age is reported
+beside it.
 
 **Declared sites are checked at import.** A `Site` whose path is not in
 the tree at the imported commit is noted in the output and recorded in the
@@ -580,11 +580,15 @@ unless `.quarry/.config` carries a `permalink_template` with `{owner}`,
   "docs_dir": "docs/capstone",
   "permalink_template": null,
   "targets": [{"name": "billing", "docs_dir": "services/billing/docs/capstone"}],
+  "sync_on_read": true,
   "url": "git@github.com:acme/docs-quarry.git"
 }
 ```
 
-`targets` is absent until `init --name` writes it.
+`targets` is absent until `init --name` writes it. `sync_on_read` is
+absent until you set it by hand: `true` makes every read pull the docs
+repo first, as if `--sync` were given, and `--offline` still overrides it
+for one call. A stored value survives every later `init`.
 
 `QUARRY_DOCS_REPO`, `QUARRY_DOCS_DIR` and `QUARRY_DEFAULT_BRANCH` stand in
 for `--url`, `--docs-dir` and `--default-branch` when there is no config
