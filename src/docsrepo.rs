@@ -15,6 +15,8 @@ pub(crate) struct Stamp {
     pub(crate) commit: String,
     #[serde(default)]
     pub(crate) origin: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) unverified: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -108,8 +110,20 @@ pub(crate) fn read_stamp(ctx: &Context, repo: &str) -> Result<Option<Stamp>> {
     }
 }
 
-pub(crate) fn stamp_json(commit: &str, origin: &str) -> String {
-    format!("{{\"commit\":\"{commit}\",\"origin\":\"{origin}\"}}\n")
+// Hand-formatted so the key order is fixed; a serialised map would sort it.
+pub(crate) fn stamp_json(commit: &str, origin: &str, unverified: &[String]) -> String {
+    let mut text = format!("{{\"commit\":\"{commit}\",\"origin\":\"{origin}\"");
+    if !unverified.is_empty() {
+        let items: Vec<String> = unverified
+            .iter()
+            .map(|key| serde_json::Value::String(key.clone()).to_string())
+            .collect();
+        text.push_str(",\"unverified\":[");
+        text.push_str(&items.join(","));
+        text.push(']');
+    }
+    text.push_str("}\n");
+    text
 }
 
 pub(crate) fn write_folder(ctx: &Context, repo: &str, built: &Path) -> Result<()> {
@@ -231,11 +245,44 @@ mod tests {
     #[test]
     fn s1_stamp_bytes_are_stable() {
         assert_eq!(
-            stamp_json("abc", "github.com/acme/ingest-api"),
+            stamp_json("abc", "github.com/acme/ingest-api", &[]),
             "{\"commit\":\"abc\",\"origin\":\"github.com/acme/ingest-api\"}\n"
         );
-        let parsed: Stamp = serde_json::from_str(&stamp_json("abc", "o")).unwrap();
+        let parsed: Stamp = serde_json::from_str(&stamp_json("abc", "o", &[])).unwrap();
         assert_eq!(parsed.commit, "abc");
         assert_eq!(parsed.origin.as_deref(), Some("o"));
+        assert!(parsed.unverified.is_empty());
+    }
+
+    #[test]
+    fn s18_stamp_carries_unverified_only_when_non_empty() {
+        let text = stamp_json(
+            "abc",
+            "o",
+            &[
+                "http GET /records".to_string(),
+                "sqs file-ingest".to_string(),
+            ],
+        );
+        assert_eq!(
+            text,
+            "{\"commit\":\"abc\",\"origin\":\"o\",\"unverified\":[\"http GET /records\",\"sqs file-ingest\"]}\n"
+        );
+        let parsed: Stamp = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.unverified.len(), 2);
+    }
+
+    #[test]
+    fn s18_a_stamp_without_unverified_reads_as_empty() {
+        let parsed: Stamp = serde_json::from_str("{\"commit\":\"abc\",\"origin\":\"o\"}").unwrap();
+        assert!(parsed.unverified.is_empty());
+    }
+
+    #[test]
+    fn s18_a_quoted_name_is_escaped_in_the_stamp() {
+        let key = "http GET /a\"b".to_string();
+        let text = stamp_json("abc", "o", std::slice::from_ref(&key));
+        let parsed: Stamp = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed.unverified, vec![key]);
     }
 }

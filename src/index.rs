@@ -12,7 +12,7 @@ use crate::docsrepo;
 use crate::errors::{QuarryError, Result};
 use crate::frontmatter;
 
-pub(crate) const SCHEMA_VERSION: i64 = 1;
+pub(crate) const SCHEMA_VERSION: i64 = 2;
 
 type EdgeKey = (String, String, String, String);
 type Sides = (bool, bool, BTreeSet<String>);
@@ -46,6 +46,7 @@ CREATE TABLE edges (
   declared_by TEXT NOT NULL CHECK (declared_by IN ('producer','consumer','both')),
   via TEXT NOT NULL,
   missing INTEGER NOT NULL DEFAULT 0,
+  site_unverified INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (from_repo, to_repo, kind, name)
 );
 CREATE INDEX edges_to ON edges (to_repo);
@@ -75,6 +76,7 @@ pub(crate) struct Edge {
     pub(crate) declared_by: String,
     pub(crate) via: Vec<String>,
     pub(crate) missing: bool,
+    pub(crate) site_unverified: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -188,6 +190,7 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
         let transaction = connection.transaction()?;
         let mut declarations: Vec<Declaration> = Vec::new();
         let mut names: BTreeSet<String> = BTreeSet::new();
+        let mut unverified: BTreeSet<(String, String)> = BTreeSet::new();
         for dir in docsrepo::read_repo_dirs(clone)? {
             let name = dir
                 .file_name()
@@ -201,6 +204,9 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
             {
                 scan.commit = Some(stamp.commit);
                 scan.origin = stamp.origin;
+                for key in stamp.unverified {
+                    unverified.insert((name.clone(), key));
+                }
             }
             for page in markdown_files(&dir)? {
                 let relative = page
@@ -299,10 +305,13 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                 _ => "consumer",
             };
             let missing = !names.contains(&from) || !names.contains(&to);
+            let key = format!("{kind} {name}");
+            let site_unverified = unverified.contains(&(from.clone(), key.clone()))
+                || unverified.contains(&(to.clone(), key));
             let via_json = serde_json::to_string(&via.iter().collect::<Vec<_>>())?;
             transaction.execute(
-                "INSERT OR REPLACE INTO edges (from_repo, to_repo, kind, name, declared_by, via, missing) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![from, to, kind, name, declared_by, via_json, missing as i64],
+                "INSERT OR REPLACE INTO edges (from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![from, to, kind, name, declared_by, via_json, missing as i64, site_unverified as i64],
             )?;
             report.edges += 1;
         }
@@ -445,9 +454,9 @@ impl Index {
 
     pub(crate) fn edges(&self, repo: &str, downstream: bool) -> Result<Vec<Edge>> {
         let sql = if downstream {
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing FROM edges WHERE from_repo = ?1 ORDER BY to_repo, kind, name"
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified FROM edges WHERE from_repo = ?1 ORDER BY to_repo, kind, name"
         } else {
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing FROM edges WHERE to_repo = ?1 ORDER BY from_repo, kind, name"
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified FROM edges WHERE to_repo = ?1 ORDER BY from_repo, kind, name"
         };
         let mut statement = self.connection.prepare(sql)?;
         let rows = statement.query_map([repo], row_to_edge)?;
@@ -456,7 +465,7 @@ impl Index {
 
     pub(crate) fn edges_touching(&self, repo: &str) -> Result<Vec<Edge>> {
         let mut statement = self.connection.prepare(
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing FROM edges WHERE from_repo = ?1 OR to_repo = ?1 ORDER BY from_repo, to_repo, kind, name",
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified FROM edges WHERE from_repo = ?1 OR to_repo = ?1 ORDER BY from_repo, to_repo, kind, name",
         )?;
         let rows = statement.query_map([repo], row_to_edge)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -477,6 +486,7 @@ fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<Edge> {
         declared_by: row.get(4)?,
         via: serde_json::from_str(&via).unwrap_or_default(),
         missing: row.get::<_, i64>(6)? != 0,
+        site_unverified: row.get::<_, i64>(7)? != 0,
     })
 }
 

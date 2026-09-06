@@ -176,6 +176,9 @@ Pin the installer to a tag rather than `latest`, so two hundred workflows
 do not all move the day a release ships. `quarry init` is a no-op when
 `.quarry/.config` is committed, which is the normal case.
 
+Add `--strict` to `quarry update` to fail the job when a declared `Site`
+path is not in the tree at that commit.
+
 ## Cross-repo edges
 
 Edges come from each repo's own `09-interfaces.md`, written as tables:
@@ -219,6 +222,18 @@ of being merged away. An edge pointing at a repo that is not in the docs
 repo is kept and marked `(not in quarry)`, so a broken link is something
 you can see. Repos declaring no edges at all are still fully searchable.
 
+`site` is optional and checked at import. The path part of every `Site`,
+everything before a trailing `:line` or `:from-to`, is tested against the
+imported commit's tracked files. A miss does not stop the import: the page
+lands, the output carries a note such as
+`site src/gone.rs:12 for http GET /records is not in the tree at 4f1c9a2`,
+the folder's stamp records the edge under `unverified`, and `deps` marks
+it `(site unverified)` from either end until a later import verifies it.
+`add --strict` and `update --strict` refuse instead, listing every
+unverifiable site, and write nothing. A chapter whose frontmatter carries
+`mode: prescriptive` names planned paths. Its sites are skipped: nothing
+is noted or stamped, and `--strict` does not refuse on it.
+
 ## Commands
 
 **In a source repo**
@@ -226,8 +241,8 @@ you can see. Repos declaring no edges at all are still fully searchable.
 | Command | What it does |
 | --- | --- |
 | `quarry init [--url] [--docs-dir] [--default-branch] [--force]` | Link this repo to a docs repo, write `.quarry/`, clone it shallowly. `--force` relinks to a different docs repo |
-| `quarry add` | Register this repo in the docs repo and import its docs. Running it twice is a no-op |
-| `quarry update [--force]` | Copy the docs at `HEAD` into the docs repo, commit, push. `--force` imports over a diverged or unreachable stamp |
+| `quarry add [--strict]` | Register this repo in the docs repo and import its docs. Running it twice is a no-op. `--strict` refuses when a declared site is not in the tree |
+| `quarry update [--force] [--strict]` | Copy the docs at `HEAD` into the docs repo, commit, push. `--force` imports over a diverged or unreachable stamp; `--strict` refuses when a declared site is not in the tree |
 | `quarry sync` | Pull the docs repo clone, then rebuild the index |
 | `quarry remove` | Drop this repo's folder, reporting who still declares edges to it |
 
@@ -266,6 +281,11 @@ times. That is safe because an import is a pure function of
 **Queries never touch the network.** The index rebuilds whenever the clone
 moves; `sync` is the only read-side command that pulls. A clone unsynced
 for a day says so before it answers.
+
+**Declared sites are checked at import.** A `Site` whose path is not in
+the tree at the imported commit is noted in the output and recorded in the
+stamp, and `deps` marks the edge from then on. `--strict` turns the note
+into a refusal.
 
 Exit codes: `0` answered or nothing to do, `1` refused, `2` something
 external failed.
@@ -321,7 +341,7 @@ regenerated on every write:
 docs-quarry/
   00-index.md
   ingest-api/
-    .quarry-stamp        the imported commit and origin
+    .quarry-stamp        the imported commit, origin, and any edges whose site was not in the tree
     00-index.md, 01-architecture.md, …, 09-interfaces.md, logic/
   record-store/
   …

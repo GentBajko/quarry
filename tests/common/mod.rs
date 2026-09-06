@@ -171,6 +171,20 @@ impl World {
         let clone = self.docs_clone(&format!("peek-{}", rand_suffix()));
         stdout(&self.git(&clone, &["show", &format!("main:{path}")]))
     }
+
+    /// Writes one file under any source repo, creating parent directories.
+    pub fn write_file(&self, repo: &Path, path: &str, body: &str) {
+        let full = repo.join(path);
+        if let Some(parent) = full.parent() {
+            std::fs::create_dir_all(parent).expect("file dir");
+        }
+        std::fs::write(full, body).expect("write file");
+    }
+
+    /// One repo folder's stamp in the docs repo at `main`.
+    pub fn remote_stamp(&self, repo: &str) -> String {
+        self.remote_file(&format!("{repo}/.quarry-stamp"))
+    }
 }
 
 fn rand_suffix() -> String {
@@ -232,6 +246,33 @@ pub fn index_page(date: &str) -> String {
 pub fn produces_page(date: &str, to: &str, kind: &str, name: &str) -> String {
     format!(
         "---\ngenerated_date: {date}\nproduces:\n  - kind: {kind}\n    name: {name}\n    to: {to}\n---\n\n## Produces\n\n| Kind | Name |\n|---|---|\n| {kind} | {name} |\n"
+    )
+}
+
+/// A produces page whose frontmatter entry carries a site.
+pub fn produces_page_with_site(date: &str, to: &str, kind: &str, name: &str, site: &str) -> String {
+    format!(
+        "---\ngenerated_date: {date}\nproduces:\n  - kind: {kind}\n    name: {name}\n    to: {to}\n    site: {site}\n---\n\n## Produces\n\n| Kind | Name |\n|---|---|\n| {kind} | {name} |\n"
+    )
+}
+
+/// A table-only interfaces page with one produces row and a Site cell.
+pub fn produces_table_page(date: &str, to: &str, kind: &str, name: &str, site: &str) -> String {
+    format!(
+        "---\ngenerated_date: {date}\n---\n\n## Produces\n\n| Kind | Name | To | Site |\n|---|---|---|---|\n| {kind} | {name} | {to} | `{site}` |\n"
+    )
+}
+
+/// A consumes page whose frontmatter entry carries a client site.
+pub fn consumes_page_with_site(
+    date: &str,
+    from: &str,
+    kind: &str,
+    name: &str,
+    site: &str,
+) -> String {
+    format!(
+        "---\ngenerated_date: {date}\nconsumes:\n  - kind: {kind}\n    name: {name}\n    from: {from}\n    site: {site}\n---\n\n## Consumes\n\n### {name} (v2)\n\n| Field | Type |\n|---|---|\n| file_id | string |\n"
     )
 }
 

@@ -23,6 +23,7 @@ pub(crate) struct EdgeDecl {
     pub(crate) kind: String,
     pub(crate) name: String,
     pub(crate) produces: bool,
+    pub(crate) site: Option<String>,
 }
 
 pub(crate) fn split(text: &str) -> (Option<&str>, &str) {
@@ -127,6 +128,7 @@ fn edge_entry(item: &Value, key: &str, produces: bool) -> std::result::Result<Ed
         kind: kind.to_ascii_lowercase(),
         name,
         produces,
+        site: string_field(map, "site"),
     })
 }
 
@@ -227,7 +229,7 @@ fn clean_cell(cell: &str) -> String {
     {
         text = text[open + 1..open + close].to_string();
     }
-    text.trim().to_string()
+    text.trim().trim_matches('`').trim().to_string()
 }
 
 fn table_entry(
@@ -255,6 +257,7 @@ fn table_entry(
         kind: kind.to_ascii_lowercase(),
         name,
         produces,
+        site: cell("site"),
     })
 }
 
@@ -343,6 +346,23 @@ pub(crate) fn normalize_heading(heading: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+}
+
+pub(crate) fn site_path(site: &str) -> &str {
+    let site = site.trim();
+    let Some((path, suffix)) = site.rsplit_once(':') else {
+        return site;
+    };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let is_line = digits(suffix)
+        || suffix
+            .split_once('-')
+            .is_some_and(|(a, b)| digits(a) && digits(b));
+    if is_line && !path.is_empty() {
+        path
+    } else {
+        site
+    }
 }
 
 #[cfg(test)]
@@ -483,5 +503,59 @@ mod tests {
             normalize_heading("  File-Ingest   (V2) {#anchor}"),
             "file-ingest (v2)"
         );
+    }
+
+    #[test]
+    fn s18_site_path_strips_a_line_or_range() {
+        assert_eq!(site_path("src/a.rs:12"), "src/a.rs");
+        assert_eq!(site_path("src/a.rs:10-20"), "src/a.rs");
+        assert_eq!(site_path("src/a.rs"), "src/a.rs");
+        assert_eq!(site_path("src/a.rs:L12"), "src/a.rs:L12");
+        assert_eq!(site_path("a:b.rs:3"), "a:b.rs");
+        assert_eq!(site_path(":12"), ":12");
+        assert_eq!(site_path(" src/a.rs:1 "), "src/a.rs");
+    }
+
+    #[test]
+    fn s18_frontmatter_site_is_carried() {
+        let parsed = parse(PAGE);
+        let (edges, _) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert_eq!(edges[0].site.as_deref(), Some("src/publish/sqs.py:57"));
+        assert_eq!(edges[1].site, None);
+    }
+
+    #[test]
+    fn s18_table_site_cell_loses_its_backticks() {
+        let parsed = parse(TABLE_PAGE);
+        let (edges, _) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert_eq!(edges[0].site.as_deref(), Some("src/publish/sqs.py:57"));
+        assert_eq!(
+            edges[1].site.as_deref(),
+            Some("src/clients/customers.py:12")
+        );
+    }
+
+    #[test]
+    fn s18_a_linked_site_cell_loses_its_backticks_too() {
+        let page = "---\ngenerated_date: 2026-09-04\n---\n\n## Produces\n\n| Kind | Name | To | Site |\n|---|---|---|---|\n| sqs | other-thing | record-store | [`src/publish.py:3`](https://example.test/blob/abc/src/publish.py#L3) |\n";
+        let parsed = parse(page);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].site.as_deref(), Some("src/publish.py:3"));
+        assert_eq!(
+            site_path(edges[0].site.as_deref().unwrap()),
+            "src/publish.py"
+        );
+    }
+
+    #[test]
+    fn s18_a_table_without_a_site_column_yields_none() {
+        let page = "---\ngenerated_date: 2026-09-04\n---\n\n## Produces\n\n| Kind | Name | To |\n|---|---|---|\n| sqs | file-ingest | record-store |\n";
+        let parsed = parse(page);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].site, None);
     }
 }

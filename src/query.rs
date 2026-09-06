@@ -49,6 +49,7 @@ pub(crate) struct DepEdge {
     pub(crate) missing: bool,
     pub(crate) cycle: bool,
     pub(crate) via: Vec<String>,
+    pub(crate) site_unverified: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -268,6 +269,7 @@ pub(crate) fn deps(
                 missing: edge.missing,
                 cycle,
                 via: edge.via.clone(),
+                site_unverified: edge.site_unverified,
             });
             max_depth = max_depth.max(at + 1);
             if !cycle && !edge.missing {

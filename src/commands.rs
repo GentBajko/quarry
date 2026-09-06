@@ -103,15 +103,15 @@ fn prompt(label: &str) -> Result<String> {
     Ok(value)
 }
 
-pub(crate) fn add(ctx: &Context) -> Result<Response> {
-    import(ctx, true, false)
+pub(crate) fn add(ctx: &Context, strict: bool) -> Result<Response> {
+    import(ctx, true, false, strict)
 }
 
-pub(crate) fn update(ctx: &Context, force: bool) -> Result<Response> {
-    import(ctx, false, force)
+pub(crate) fn update(ctx: &Context, force: bool, strict: bool) -> Result<Response> {
+    import(ctx, false, force, strict)
 }
 
-fn import(ctx: &Context, adding: bool, force: bool) -> Result<Response> {
+fn import(ctx: &Context, adding: bool, force: bool, strict: bool) -> Result<Response> {
     let config = ctx.config()?.clone();
     let identity = ctx.identity()?.clone();
     ctx.require_clone()?;
@@ -170,7 +170,21 @@ fn import(ctx: &Context, adding: bool, force: bool) -> Result<Response> {
         })));
     }
 
+    // The build lands in a tempdir under .quarry/, so refusing here writes
+    // nothing into the docs clone.
     let built = importer::build(ctx, &head)?;
+    if strict && !built.unverified.is_empty() {
+        return Err(QuarryError::refusal(strict_message(
+            &built.unverified,
+            &head,
+        )));
+    }
+    notes.extend(
+        built
+            .unverified
+            .iter()
+            .map(|site| importer::unverified_note(site, &head)),
+    );
     let files = built.files;
     docsrepo::write_folder(ctx, &identity.name, built.dir.path())?;
     std::mem::forget(built.dir);
@@ -465,4 +479,13 @@ fn stamp_sync(ctx: &Context) -> Result<()> {
 
 fn short(sha: &str) -> String {
     sha.chars().take(7).collect()
+}
+
+fn strict_message(sites: &[importer::UnverifiedSite], head: &str) -> String {
+    let mut lines: Vec<String> = sites
+        .iter()
+        .map(|site| importer::unverified_note(site, head))
+        .collect();
+    lines.push("fix 09-interfaces.md or run without --strict".to_string());
+    lines.join("\n")
 }

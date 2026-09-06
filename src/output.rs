@@ -349,6 +349,9 @@ fn human(payload: &Payload) -> String {
                 if edge.declared_by != "both" {
                     marks.push_str(&format!(" (declared by {} only)", edge.declared_by));
                 }
+                if edge.site_unverified {
+                    marks.push_str(" (site unverified)");
+                }
                 text.push_str(&format!(
                     "{}{} {} {} {}{}\n",
                     "  ".repeat(edge.depth as usize),

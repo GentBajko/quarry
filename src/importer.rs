@@ -1,6 +1,6 @@
 //! Copies the docs folder at one commit, with pinned permalinks.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::sync::LazyLock;
 
@@ -28,10 +28,18 @@ const POINTER_PATTERN: &str = r"`(?P<path>[^`\s:]+):(?P<a>\d+)(?:-(?P<b>\d+))?`"
 
 static POINTER: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(POINTER_PATTERN).ok());
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct UnverifiedSite {
+    pub(crate) kind: String,
+    pub(crate) name: String,
+    pub(crate) site: String,
+}
+
 #[derive(Debug)]
 pub(crate) struct Built {
     pub(crate) dir: TempDir,
     pub(crate) files: usize,
+    pub(crate) unverified: Vec<UnverifiedSite>,
 }
 
 pub(crate) fn build(ctx: &Context, sha: &str) -> Result<Built> {
@@ -60,6 +68,7 @@ pub(crate) fn build(ctx: &Context, sha: &str) -> Result<Built> {
         .collect();
     let template = template_for(ctx)?;
     let mut files = 0usize;
+    let mut unverified: Vec<UnverifiedSite> = Vec::new();
     for name in &names {
         let dest = dir.path().join(name);
         if let Some(parent) = dest.parent() {
@@ -68,6 +77,7 @@ pub(crate) fn build(ctx: &Context, sha: &str) -> Result<Built> {
         let blob = git.run(&["show", &format!("{prefix}/{name}")])?;
         if name.ends_with(".md") {
             let text = String::from_utf8_lossy(&blob.stdout).to_string();
+            unverified.extend(unverified_sites(name, &text, &tracked));
             fs::write(
                 &dest,
                 rewrite_page(&text, &tracked, &template, sha, identity),
@@ -77,11 +87,17 @@ pub(crate) fn build(ctx: &Context, sha: &str) -> Result<Built> {
         }
         files += 1;
     }
+    unverified.sort();
+    unverified.dedup();
     fs::write(
         dir.path().join(STAMP_FILE),
-        stamp_json(sha, &identity.origin),
+        stamp_json(sha, &identity.origin, &stamp_keys(&unverified)),
     )?;
-    Ok(Built { dir, files })
+    Ok(Built {
+        dir,
+        files,
+        unverified,
+    })
 }
 
 fn template_for(ctx: &Context) -> Result<String> {
@@ -94,6 +110,58 @@ fn template_for(ctx: &Context) -> Result<String> {
         .find(|(h, _)| *h == host)
         .map(|(_, t)| (*t).to_string())
         .unwrap_or_else(|| DEFAULT_TEMPLATE.to_string()))
+}
+
+// A prescriptive chapter names planned paths, so its sites are not checked;
+// the Capstone script applies the same skip.
+pub(crate) fn unverified_sites(
+    path: &str,
+    text: &str,
+    tracked: &HashSet<String>,
+) -> Vec<UnverifiedSite> {
+    let parsed = crate::frontmatter::parse(text);
+    if parsed
+        .fields
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .is_some_and(|mode| mode.trim().eq_ignore_ascii_case("prescriptive"))
+    {
+        return Vec::new();
+    }
+    let (edges, _) = crate::frontmatter::edges_of(path, &parsed.fields, &parsed.body);
+    edges
+        .into_iter()
+        .filter_map(|edge| {
+            let site = edge.site?;
+            if tracked.contains(crate::frontmatter::site_path(&site)) {
+                return None;
+            }
+            Some(UnverifiedSite {
+                kind: edge.kind,
+                name: edge.name,
+                site,
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn unverified_note(site: &UnverifiedSite, sha: &str) -> String {
+    format!(
+        "site {} for {} {} is not in the tree at {}",
+        site.site,
+        site.kind,
+        site.name,
+        sha.chars().take(7).collect::<String>()
+    )
+}
+
+pub(crate) fn stamp_keys(sites: &[UnverifiedSite]) -> Vec<String> {
+    sites
+        .iter()
+        .map(|s| format!("{} {}", s.kind, s.name))
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect()
 }
 
 pub(crate) fn rewrite_page(
@@ -250,5 +318,101 @@ mod tests {
             "{out}"
         );
         assert_eq!(out.matches("https://github.com").count(), 1, "{out}");
+    }
+
+    fn table_page(site: &str) -> String {
+        format!(
+            "---\ngenerated_date: 2026-09-04\n---\n\n## Produces\n\n| Kind | Name | To | Site |\n|---|---|---|---|\n| sqs | file-ingest | record-store | `{site}` |\n"
+        )
+    }
+
+    #[test]
+    fn s18_an_untracked_site_is_reported_with_its_edge() {
+        let found = unverified_sites(
+            "09-interfaces.md",
+            &table_page("src/gone.py:12"),
+            &tracked(),
+        );
+        assert_eq!(
+            found,
+            vec![UnverifiedSite {
+                kind: "sqs".to_string(),
+                name: "file-ingest".to_string(),
+                site: "src/gone.py:12".to_string(),
+            }]
+        );
+        assert_eq!(
+            unverified_note(&found[0], "4f1c9a2abcdef"),
+            "site src/gone.py:12 for sqs file-ingest is not in the tree at 4f1c9a2"
+        );
+    }
+
+    #[test]
+    fn s18_a_tracked_site_with_a_range_is_verified() {
+        let found = unverified_sites(
+            "09-interfaces.md",
+            &table_page("src/publish/sqs.py:10-20"),
+            &tracked(),
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn s18_a_site_without_a_line_is_verified_by_its_path() {
+        let found = unverified_sites(
+            "09-interfaces.md",
+            &table_page("src/publish/sqs.py"),
+            &tracked(),
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn s18_stamp_keys_are_sorted_and_deduped() {
+        let site = |kind: &str, name: &str, site: &str| UnverifiedSite {
+            kind: kind.to_string(),
+            name: name.to_string(),
+            site: site.to_string(),
+        };
+        let sites = [
+            site("sqs", "file-ingest", "a.rs:1"),
+            site("sqs", "file-ingest", "b.rs:2"),
+            site("http", "GET /x", "c.rs:3"),
+        ];
+        assert_eq!(stamp_keys(&sites), vec!["http GET /x", "sqs file-ingest"]);
+    }
+
+    #[test]
+    fn s18_sites_off_the_interfaces_page_come_from_frontmatter_only() {
+        let from_table = unverified_sites(
+            "01-architecture.md",
+            &table_page("src/gone.py:12"),
+            &tracked(),
+        );
+        assert!(from_table.is_empty(), "{from_table:?}");
+        let page = "---\nproduces:\n  - kind: sqs\n    name: x\n    to: record-store\n    site: src/gone.py:1\n---\n\nbody\n";
+        let from_front = unverified_sites("01-architecture.md", page, &tracked());
+        assert_eq!(from_front.len(), 1, "{from_front:?}");
+        assert_eq!(from_front[0].site, "src/gone.py:1");
+    }
+
+    #[test]
+    fn s18_a_prescriptive_page_skips_site_checks() {
+        let page = format!(
+            "---\ngenerated_date: 2026-09-04\nmode: prescriptive\n---\n{}",
+            crate::frontmatter::parse(&table_page("src/gone.py:12")).body
+        );
+        let found = unverified_sites("09-interfaces.md", &page, &tracked());
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn s18_prescriptive_mode_is_matched_case_insensitively() {
+        let body = crate::frontmatter::parse(&table_page("src/gone.py:12")).body;
+        for mode in ["Prescriptive", "PRESCRIPTIVE", "  prescriptive  "] {
+            let page = format!("---\ngenerated_date: 2026-09-04\nmode: \"{mode}\"\n---\n{body}");
+            let found = unverified_sites("09-interfaces.md", &page, &tracked());
+            assert!(found.is_empty(), "{mode}: {found:?}");
+        }
     }
 }

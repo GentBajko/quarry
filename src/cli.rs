@@ -43,12 +43,19 @@ pub(crate) enum Command {
         force: bool,
     },
     /// Register this repo in the docs repo and import its docs.
-    Add,
+    Add {
+        /// Refuse the import when a declared site is not in the tree at HEAD.
+        #[arg(long)]
+        strict: bool,
+    },
     /// Copy this repo's docs into the docs repo, commit, push.
     Update {
         /// Import over a diverged or unreachable stamp.
         #[arg(long)]
         force: bool,
+        /// Refuse the import when a declared site is not in the tree at HEAD.
+        #[arg(long)]
+        strict: bool,
     },
     /// Pull the docs repo clone and rebuild the index.
     Sync,
@@ -144,8 +151,8 @@ pub(crate) fn run(cli: &Cli) -> Result<Response> {
             given(default_branch),
             *force,
         ),
-        Command::Add => commands::add(&ctx),
-        Command::Update { force } => commands::update(&ctx, *force),
+        Command::Add { strict } => commands::add(&ctx, *strict),
+        Command::Update { force, strict } => commands::update(&ctx, *force, *strict),
         Command::Sync => commands::sync(&ctx),
         Command::Remove => commands::remove(&ctx),
         Command::Docs { command } => match command {
