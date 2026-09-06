@@ -49,6 +49,7 @@
   <a href="#use-it">Use it</a> ·
   <a href="#in-ci">In CI</a> ·
   <a href="#cross-repo-edges">Edges</a> ·
+  <a href="#contract-check">Contracts</a> ·
   <a href="#commands">Commands</a> ·
   <a href="#rules-worth-knowing">Rules</a> ·
   <a href="#with-capstone">With Capstone</a>
@@ -111,13 +112,14 @@ you already configured. SQLite is compiled in.
 
 ## Use it
 
-Four commands run in a source repo, once each in the places you'd expect:
+Five commands run in a source repo, once each in the places you'd expect:
 
 ```sh
 quarry init --url git@github.com:acme/docs-quarry.git   # once per repo
 quarry add                                             # register and import
 quarry update                                          # after every merge to main
 quarry sync                                            # pull what other repos pushed
+quarry check                                           # before merging: are consumers' fields still produced
 ```
 
 Eight answer questions, from the local index, offline, with `--json` on
@@ -178,6 +180,10 @@ do not all move the day a release ships. `quarry init` is a no-op when
 
 Add `--strict` to `quarry update` to fail the job when a declared `Site`
 path is not in the tree at that commit.
+
+On pull requests, add a second job that runs `quarry init` and then
+`quarry check`; it needs the clone and nothing else, and exits 1 on a
+contract break (see [Contract check](#contract-check)).
 
 ## Cross-repo edges
 
@@ -313,6 +319,62 @@ the coverage job in
 `gh repo list` with the folders in the docs repo once a night and prints
 the repos with no folder.
 
+## Contract check
+
+`09-interfaces.md` carries one `### <Name>` section per edge row, under
+`## Produces` for what this repo emits and under `## Consumes` for the
+fields this repo actually reads:
+
+```markdown
+## Produces
+
+| Kind | Name | To |
+|---|---|---|
+| http | GET /records | [report-builder](../report-builder/09-interfaces.md) |
+
+### GET /records
+
+| Field | Type | Required |
+|---|---|---|
+| id | string | yes |
+| created_at | string | yes |
+| content_type | enum | yes |
+```
+
+`quarry check` reads the working tree's chapter, finds every consumer the
+quarry knows for each produced contract, and compares the two tables field
+by field:
+
+```text
+$ quarry check
+record-store produces http GET /records
+  report-builder reads id, created_at, content_type   (2026-09-01)
+  break: content_type no longer produced
+1 break
+```
+
+| The consumer reads a field that | Verdict |
+| --- | --- |
+| the producer no longer lists | break |
+| changed type | break |
+| flipped between required and optional | warning |
+
+A break exits 1; warnings and notes never do. `--json` keeps `ok: true`
+and puts the list under `result.breaks`, one object per consumer and
+field. A producer row with no payload section is a warning ("nothing to
+compare"); a consumer with no section for the contract is a note.
+Headings match exactly first, then with a version suffix
+(`### file-ingest (v2)` satisfies `file-ingest`); columns are matched by
+name; `Required` reads `yes`/`no`, and a table without the column is
+compared on field and type only; types are compared after trimming and
+case-folding.
+
+The check is offline: it uses the clone as last synced, so in CI it runs
+right after `quarry init`, on pull requests, beside Capstone's `map check`,
+and blocks the merge before a consumer ever sees the change. `quarry
+update` runs the same comparison after every import and reports breaks as
+notes without changing its exit code.
+
 ## Commands
 
 **In a source repo**
@@ -324,6 +386,7 @@ the repos with no folder.
 | `quarry update [--force] [--strict]` | Copy the docs at `HEAD` into the docs repo, commit, push. `--force` imports over a diverged or unreachable stamp; `--strict` refuses when a declared site is not in the tree |
 | `quarry sync` | Pull the docs repo clone, then rebuild the index |
 | `quarry remove` | Drop this repo's folder, reporting who still declares edges to it |
+| `quarry check` | Compare every produced contract's payload table with the fields each consumer records; exit 1 on a break |
 
 **Queries**
 
@@ -366,8 +429,8 @@ the tree at the imported commit is noted in the output and recorded in the
 stamp, and `deps` marks the edge from then on. `--strict` turns the note
 into a refusal.
 
-Exit codes: `0` answered or nothing to do, `1` refused, `2` something
-external failed.
+Exit codes: `0` answered or nothing to do, `1` refused or a contract
+break, `2` something external failed.
 
 ## With [Capstone](https://github.com/GentBajko/capstone)
 
@@ -384,6 +447,10 @@ What that buys you is one repo reaching for another repo's contract
 covered by `09-interfaces.md`. The constraint lands in the plan as a
 citation, rather than in code review a week later. Set
 `cross_repo: "off"` in `capstone.json` if you'd rather it didn't.
+
+The other direction is `quarry check`: Capstone 6.2 writes a payload table
+under every Produces and Consumes row, and the producer's CI compares its
+own against each consumer's before the change merges.
 
 Designing something new works the same way. A repo with no origin, no
 commits and no docs can still run `quarry init` and read the whole quarry;

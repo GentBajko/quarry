@@ -3,6 +3,7 @@
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::check::CheckOut;
 use crate::errors::QuarryError;
 use crate::index::{Edge, RebuildReport, RepoRow};
 use crate::query::{DepsResult, PathResult, RepoShow, SearchHit, SectionHit};
@@ -82,6 +83,7 @@ pub(crate) enum Payload {
     Deps(Box<DepsResult>),
     Path(Box<PathResult>),
     Index(RebuildReport),
+    Check(CheckOut),
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +98,22 @@ impl Response {
             meta: Meta::default(),
             payload,
         }
+    }
+
+    // Only this payload's content decides the exit code.
+    pub(crate) fn exit_code(&self) -> u8 {
+        match &self.payload {
+            Payload::Check(out) if !out.breaks.is_empty() => 1,
+            _ => 0,
+        }
+    }
+}
+
+pub(crate) fn count_breaks(n: usize) -> String {
+    match n {
+        0 => "no breaks".to_string(),
+        1 => "1 break".to_string(),
+        n => format!("{n} breaks"),
     }
 }
 
@@ -143,6 +161,7 @@ fn payload_value(payload: &Payload) -> Value {
         Payload::Deps(out) => serde_json::to_value(out).unwrap_or(Value::Null),
         Payload::Path(out) => serde_json::to_value(out).unwrap_or(Value::Null),
         Payload::Index(out) => serde_json::to_value(out).unwrap_or(Value::Null),
+        Payload::Check(out) => serde_json::to_value(out).unwrap_or(Value::Null),
     }
 }
 
@@ -446,6 +465,43 @@ fn human(payload: &Payload) -> String {
             }
             text
         }
+        Payload::Check(out) => {
+            let mut text = String::new();
+            for contract in &out.contracts {
+                text.push_str(&format!(
+                    "{} produces {} {}\n",
+                    out.repo, contract.kind, contract.name
+                ));
+                for consumer in &contract.consumers {
+                    let fields = if consumer.fields.is_empty() {
+                        "no recorded fields".to_string()
+                    } else {
+                        consumer.fields.join(", ")
+                    };
+                    text.push_str(&format!(
+                        "  {} reads {}   ({})\n",
+                        consumer.repo,
+                        fields,
+                        consumer.generated_date.as_deref().unwrap_or("-")
+                    ));
+                    for line in &consumer.breaks {
+                        text.push_str(&format!("  break: {line}\n"));
+                    }
+                    for line in &consumer.warnings {
+                        text.push_str(&format!("  warning: {line}\n"));
+                    }
+                }
+            }
+            for warning in &out.warnings {
+                text.push_str(&format!("warning: {warning}\n"));
+            }
+            for note in &out.notes {
+                text.push_str(&format!("note: {note}\n"));
+            }
+            text.push_str(&count_breaks(out.breaks.len()));
+            text.push('\n');
+            text
+        }
     }
 }
 
@@ -574,6 +630,76 @@ mod tests {
         assert_eq!(observed_mark("both", true, false, true), "");
         assert_eq!(observed_mark("producer", false, true, true), "");
         assert_eq!(observed_mark("by-name", false, false, true), "");
+    }
+
+    fn check_out(breaks: Vec<crate::check::ContractBreak>) -> CheckOut {
+        CheckOut {
+            repo: "record-store".to_string(),
+            contracts: vec![crate::check::ContractOut {
+                kind: "http".to_string(),
+                name: "GET /records".to_string(),
+                consumers: vec![crate::check::ConsumerOut {
+                    repo: "report-builder".to_string(),
+                    fields: vec![
+                        "id".to_string(),
+                        "created_at".to_string(),
+                        "content_type".to_string(),
+                    ],
+                    generated_date: Some("2026-09-01".to_string()),
+                    breaks: breaks
+                        .iter()
+                        .map(|b| format!("{} {}", b.field, b.reason))
+                        .collect(),
+                    warnings: Vec::new(),
+                }],
+            }],
+            breaks,
+            warnings: Vec::new(),
+            notes: Vec::new(),
+        }
+    }
+
+    fn one_break() -> Vec<crate::check::ContractBreak> {
+        vec![crate::check::ContractBreak {
+            consumer: "report-builder".to_string(),
+            kind: "http".to_string(),
+            name: "GET /records".to_string(),
+            field: "content_type".to_string(),
+            reason: "no longer produced".to_string(),
+        }]
+    }
+
+    #[test]
+    fn s14_a_check_with_breaks_exits_one() {
+        assert_eq!(
+            Response::bare(Payload::Check(check_out(one_break()))).exit_code(),
+            1
+        );
+        assert_eq!(
+            Response::bare(Payload::Check(check_out(Vec::new()))).exit_code(),
+            0
+        );
+        assert_eq!(Response::bare(Payload::Help(String::new())).exit_code(), 0);
+    }
+
+    #[test]
+    fn s14_check_human_layout_matches_the_contract() {
+        let text = render(
+            &Response::bare(Payload::Check(check_out(one_break()))),
+            false,
+            None,
+        );
+        assert_eq!(
+            text,
+            "record-store produces http GET /records\n  report-builder reads id, created_at, content_type   (2026-09-01)\n  break: content_type no longer produced\n1 break\n"
+        );
+    }
+
+    #[test]
+    fn s14_the_break_count_is_pluralised_once() {
+        assert_eq!(count_breaks(0), "no breaks");
+        assert_eq!(count_breaks(1), "1 break");
+        assert_eq!(count_breaks(3), "3 breaks");
     }
 
     #[test]

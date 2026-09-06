@@ -61,6 +61,8 @@ pub(crate) enum Command {
     Sync,
     /// Drop this repo from the docs repo.
     Remove,
+    /// Compare this repo's produced contracts with the fields each consumer reads.
+    Check,
     /// Query the docs repo.
     Docs {
         #[command(subcommand)]
@@ -155,6 +157,7 @@ pub(crate) fn run(cli: &Cli) -> Result<Response> {
         Command::Update { force, strict } => commands::update(&ctx, *force, *strict),
         Command::Sync => commands::sync(&ctx),
         Command::Remove => commands::remove(&ctx),
+        Command::Check => commands::check(&ctx),
         Command::Docs { command } => match command {
             None => Ok(Response::bare(Payload::Help(help_text(Some("docs"))))),
             Some(DocsCommand::List { repo }) => commands::docs_list(&ctx, repo.clone()),

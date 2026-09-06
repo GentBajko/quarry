@@ -363,6 +363,122 @@ pub fn produces_and_mentions_page(
     )
 }
 
+/// The three fields report-builder reads from GET /records.
+pub const RECORD_FIELDS: &[(&str, &str, &str)] = &[
+    ("id", "string", "yes"),
+    ("created_at", "string", "yes"),
+    ("content_type", "enum", "yes"),
+];
+
+/// A `| Field | Type | Required |` table.
+pub fn payload_table(fields: &[(&str, &str, &str)]) -> String {
+    let mut text = "| Field | Type | Required |\n|---|---|---|\n".to_string();
+    for (name, ty, required) in fields {
+        text.push_str(&format!("| {name} | {ty} | {required} |\n"));
+    }
+    text
+}
+
+/// A producer page with its payload section; no section when `fields` is empty.
+pub fn producer_page(
+    date: &str,
+    to: &str,
+    kind: &str,
+    name: &str,
+    fields: &[(&str, &str, &str)],
+) -> String {
+    let mut text = format!(
+        "---\ngenerated_date: {date}\n---\n\n## Produces\n\n| Kind | Name | To |\n|---|---|---|\n| {kind} | {name} | [{to}](../{to}/09-interfaces.md) |\n"
+    );
+    if !fields.is_empty() {
+        text.push_str(&format!("\n### {name}\n\n{}", payload_table(fields)));
+    }
+    text
+}
+
+/// A consumer page. `heading` None means no contract section at all; a heading
+/// with no fields gets a section holding prose, which is the "lists no fields"
+/// case.
+pub fn consumer_page_with(
+    date: &str,
+    from: &str,
+    kind: &str,
+    name: &str,
+    heading: Option<&str>,
+    fields: &[(&str, &str, &str)],
+) -> String {
+    let mut text = format!(
+        "---\ngenerated_date: {date}\n---\n\n## Consumes\n\n| Kind | Name | From |\n|---|---|---|\n| {kind} | {name} | [{from}](../{from}/09-interfaces.md) |\n"
+    );
+    if let Some(heading) = heading {
+        let body = if fields.is_empty() {
+            "Still being written.\n".to_string()
+        } else {
+            payload_table(fields)
+        };
+        text.push_str(&format!("\n### {heading}\n\n{body}"));
+    }
+    text
+}
+
+pub struct Contracts {
+    pub w: World,
+    pub producer: PathBuf,
+    pub consumer: PathBuf,
+}
+
+/// record-store produces http GET /records for report-builder, both registered
+/// and synced, with matching payload tables; the default ingest-api source is
+/// unused.
+pub fn contract_world() -> Contracts {
+    let w = world();
+    let producer = w.other_repo("record-store");
+    w.write_docs_in(
+        &producer,
+        &[
+            ("00-index.md", &index_page("2026-09-03")),
+            (
+                "09-interfaces.md",
+                &producer_page(
+                    "2026-09-03",
+                    "report-builder",
+                    "http",
+                    "GET /records",
+                    RECORD_FIELDS,
+                ),
+            ),
+        ],
+    );
+    w.commit_push_in(&producer, "docs");
+    assert!(w.run_in(&producer, &["add"]).status.success());
+    let consumer = w.other_repo("report-builder");
+    w.write_docs_in(
+        &consumer,
+        &[
+            ("00-index.md", &index_page("2026-09-01")),
+            (
+                "09-interfaces.md",
+                &consumer_page_with(
+                    "2026-09-01",
+                    "record-store",
+                    "http",
+                    "GET /records",
+                    Some("GET /records (v2)"),
+                    RECORD_FIELDS,
+                ),
+            ),
+        ],
+    );
+    w.commit_push_in(&consumer, "docs");
+    assert!(w.run_in(&consumer, &["add"]).status.success());
+    assert!(w.run_in(&producer, &["sync"]).status.success());
+    Contracts {
+        w,
+        producer,
+        consumer,
+    }
+}
+
 pub struct Wired {
     pub w: World,
     pub data: PathBuf,

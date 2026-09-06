@@ -1,5 +1,6 @@
 //! quarry: one docs repo for many code repos, queryable by agents and people.
 
+mod check;
 mod cli;
 mod commands;
 mod config;
@@ -39,7 +40,7 @@ fn main() -> ExitCode {
             if write_out(&text).is_err() {
                 return ExitCode::from(2);
             }
-            ExitCode::SUCCESS
+            ExitCode::from(response.exit_code())
         }
         Err(e) => fail(&e, cli.json),
     }

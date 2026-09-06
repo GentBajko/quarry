@@ -193,12 +193,13 @@ fn edges_from_tables(body: &str) -> (Vec<EdgeDecl>, Vec<String>) {
     (edges, warnings)
 }
 
-struct Table {
-    headers: Vec<String>,
-    rows: Vec<Vec<String>>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Table {
+    pub(crate) headers: Vec<String>,
+    pub(crate) rows: Vec<Vec<String>>,
 }
 
-fn table_of(body: &str) -> Option<Table> {
+pub(crate) fn table_of(body: &str) -> Option<Table> {
     let unfenced = strip_fences(body);
     let mut lines = unfenced
         .into_iter()

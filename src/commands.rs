@@ -3,16 +3,18 @@
 use std::io::IsTerminal;
 use std::io::Write;
 
+use crate::check;
 use crate::config;
 use crate::context::Context;
 use crate::docsrepo::{self, PushResult, Redo};
 use crate::errors::{QuarryError, Result};
+use crate::frontmatter;
 use crate::gitcmd;
 use crate::identity;
 use crate::importer;
 use crate::index;
 use crate::output::{
-    FileRow, FilesOut, InitOut, Meta, Payload, RemoveOut, Response, SyncOut, WriteOut,
+    FileRow, FilesOut, InitOut, Meta, Payload, RemoveOut, Response, SyncOut, WriteOut, count_breaks,
 };
 use crate::query::{self, Direction};
 
@@ -219,6 +221,7 @@ fn import(ctx: &Context, adding: bool, force: bool, strict: bool) -> Result<Resp
         PushResult::Skipped(reason) => reason,
     };
     reindex(ctx)?;
+    notes.extend(contract_notes(ctx, &identity.name)?);
     Ok(Response::bare(Payload::Write(WriteOut {
         repo: identity.name,
         from,
@@ -227,6 +230,88 @@ fn import(ctx: &Context, adding: bool, force: bool, strict: bool) -> Result<Resp
         result,
         notes,
     })))
+}
+
+pub(crate) fn check(ctx: &Context) -> Result<Response> {
+    let config = ctx.config()?.clone();
+    let identity = ctx.identity()?.clone();
+    let clone = ctx.require_clone()?;
+    let opened = index::open_current(ctx)?;
+    let page = ctx
+        .repo_root
+        .join(&config.docs_dir)
+        .join(frontmatter::INTERFACES_PAGE);
+    let text = match std::fs::read_to_string(&page) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(QuarryError::from(e)),
+    };
+    let mut out = check::run(&opened, &identity.name, text.as_deref(), &clone)?;
+    // An unregistered repo already carries check::run's own note; a second one
+    // about the missing chapter would add nothing. The edge filter is the same
+    // three terms check::run applies when it groups consumers.
+    if text.is_none() && opened.has_repo(&identity.name)? {
+        let has_consumers = opened.edges(&identity.name, true)?.iter().any(|edge| {
+            !edge.missing && edge.declared_by != "observed" && edge.to_repo != identity.name
+        });
+        let note = if has_consumers {
+            format!(
+                "no {}/{} in the working tree; run Capstone map first",
+                config.docs_dir,
+                frontmatter::INTERFACES_PAGE
+            )
+        } else {
+            // check::run's no-consumers note says the same thing from the
+            // other side; B3 words this case as one note.
+            let redundant = format!(
+                "no consumers of {} in the quarry; nothing to compare",
+                identity.name
+            );
+            out.notes.retain(|n| n != &redundant);
+            format!(
+                "no {} in {}; nothing to check",
+                frontmatter::INTERFACES_PAGE,
+                config.docs_dir
+            )
+        };
+        out.notes.insert(0, note);
+    }
+    Ok(Response {
+        meta: meta_of(&opened),
+        payload: Payload::Check(out),
+    })
+}
+
+// The imported folder is in the clone by now, so this compares the pages that
+// were just written. Advisory: breaks become notes and the exit code is
+// unchanged.
+fn contract_notes(ctx: &Context, repo: &str) -> Result<Vec<String>> {
+    let clone = ctx.require_clone()?;
+    let page = clone.join(repo).join(frontmatter::INTERFACES_PAGE);
+    let text = match std::fs::read_to_string(&page) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(QuarryError::from(e)),
+    };
+    let opened = index::open_current(ctx)?;
+    let out = check::run(&opened, repo, Some(&text), &clone)?;
+    let mut notes: Vec<String> = out
+        .breaks
+        .iter()
+        .map(|b| {
+            format!(
+                "contract check: {} reads {} from {} {}; {}",
+                b.consumer, b.field, b.kind, b.name, b.reason
+            )
+        })
+        .collect();
+    if !notes.is_empty() {
+        notes.push(format!(
+            "contract check: {}",
+            count_breaks(out.breaks.len())
+        ));
+    }
+    Ok(notes)
 }
 
 struct Plan {

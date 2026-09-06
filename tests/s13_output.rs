@@ -18,7 +18,7 @@ fn s13_bare_quarry_prints_help_and_exits_zero() {
     let out = w.run(&[]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let text = stdout(&out);
-    for verb in ["init", "add", "update", "sync", "remove", "docs"] {
+    for verb in ["init", "add", "update", "sync", "remove", "check", "docs"] {
         assert!(text.contains(verb), "{text}");
     }
     assert!(text.contains("Support quarry"), "{text}");
