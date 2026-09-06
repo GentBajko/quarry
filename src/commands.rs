@@ -328,6 +328,9 @@ fn import(ctx: &Context, adding: bool, force: bool, strict: bool) -> Result<Resp
             umbrella_of(&units[i], &config),
         )?);
     }
+    // The secret gate goes first: of the two things --strict refuses, a leaked
+    // credential is the one to read about before anything else.
+    secret_gate(&built, strict)?;
     if strict {
         let unverified: Vec<importer::UnverifiedSite> = built
             .iter()
@@ -345,6 +348,9 @@ fn import(ctx: &Context, adding: bool, force: bool, strict: bool) -> Result<Resp
                 .iter()
                 .map(|site| importer::unverified_note(site, &head)),
         );
+        outs[i]
+            .notes
+            .extend(built[n].secrets.iter().map(secret_note));
         docsrepo::write_folder(ctx, &units[i].name, built[n].dir.path())?;
     }
     for one in built {
@@ -395,6 +401,10 @@ fn import(ctx: &Context, adding: bool, force: bool, strict: bool) -> Result<Resp
                 )?,
             ));
         }
+        // The redo rebuilds the same commit, so the verdict is the one already
+        // reached; running it again keeps the guarantee that nothing strict
+        // refuses is ever written, whatever a later change makes the redo build.
+        secret_gate(rebuilt.iter().map(|(_, one)| one), strict)?;
         if rebuilt.is_empty() {
             return Ok(Redo::Skip(
                 first_reason.unwrap_or_else(|| "current".to_string()),
@@ -863,6 +873,31 @@ fn stamp_sync(ctx: &Context) -> Result<()> {
 
 fn short(sha: &str) -> String {
     sha.chars().take(7).collect()
+}
+
+fn secret_note(hit: &crate::secrets::SecretHit) -> String {
+    format!("{} contains a {}", hit.file, hit.pattern)
+}
+
+// Hits are collected across every pending unit before the first folder is
+// written, so a secret in the second target leaves the first one unwritten too.
+fn secret_gate<'a>(
+    built: impl IntoIterator<Item = &'a importer::Built>,
+    strict: bool,
+) -> Result<()> {
+    if !strict {
+        return Ok(());
+    }
+    let mut lines: Vec<String> = built
+        .into_iter()
+        .flat_map(|one| one.secrets.iter())
+        .map(secret_note)
+        .collect();
+    if lines.is_empty() {
+        return Ok(());
+    }
+    lines.push("remove them from the docs before importing".to_string());
+    Err(QuarryError::refusal(lines.join("\n")))
 }
 
 fn strict_message(sites: &[importer::UnverifiedSite], head: &str) -> String {

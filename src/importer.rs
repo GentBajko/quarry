@@ -44,6 +44,7 @@ pub(crate) struct Built {
     pub(crate) dir: TempDir,
     pub(crate) files: usize,
     pub(crate) unverified: Vec<UnverifiedSite>,
+    pub(crate) secrets: Vec<crate::secrets::SecretHit>,
 }
 
 /// Copies one unit's docs folder. `umbrella_of` is non-empty only for the root
@@ -82,6 +83,7 @@ pub(crate) fn build(
     let base = pointer_base(&config.docs_dir, &target.docs_dir);
     let mut files = 0usize;
     let mut unverified: Vec<UnverifiedSite> = Vec::new();
+    let mut secrets: Vec<crate::secrets::SecretHit> = Vec::new();
     for name in &names {
         if nested_in_a_target(&target.docs_dir, name, umbrella_of) {
             continue;
@@ -91,8 +93,17 @@ pub(crate) fn build(
             fs::create_dir_all(parent)?;
         }
         let blob = git.run(&["show", &format!("{prefix}/{name}")])?;
+        let text = String::from_utf8_lossy(&blob.stdout);
+        // Every copied file, markdown or not: an .env.example under the docs
+        // folder is where a key leaks, and the patterns are ASCII, so a lossy
+        // decode of a binary cannot invent a hit.
+        for pattern in crate::secrets::scan(&text) {
+            secrets.push(crate::secrets::SecretHit {
+                file: format!("{}/{name}", target.docs_dir),
+                pattern,
+            });
+        }
         if name.ends_with(".md") {
-            let text = String::from_utf8_lossy(&blob.stdout).to_string();
             unverified.extend(unverified_sites(name, &text, &tracked, base));
             let mut rendered = rewrite_page(&text, &tracked, &template, sha, identity, base);
             if !umbrella_of.is_empty() && name == "00-index.md" {
@@ -119,6 +130,7 @@ pub(crate) fn build(
         dir,
         files,
         unverified,
+        secrets,
     })
 }
 

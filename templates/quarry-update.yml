@@ -1,0 +1,115 @@
+# quarry docs import, a reusable workflow. Copy this file into the DOCS
+# repo (the one quarry writes to) as .github/workflows/quarry-update.yml
+# and call it from every source repo with the caller below. The GitHub
+# App is installed once, on the organisation; each job mints a token
+# scoped to the docs repo alone, so no source repo ever holds a PAT.
+#
+# Caller, in each source repo's .github/workflows/quarry.yml:
+#
+#   on: { push: { branches: [main] } }
+#   jobs:
+#     quarry:
+#       uses: acme/docs-quarry/.github/workflows/quarry-update.yml@main
+#       with: { docs-repo: acme/docs-quarry }
+#       secrets:
+#         app-id: ${{ secrets.QUARRY_APP_ID }}
+#         app-private-key: ${{ secrets.QUARRY_APP_PRIVATE_KEY }}
+#
+# `strict` defaults to true. A repo that would rather see unverifiable
+# sites and secret findings as notes than have the import refused calls
+# with `strict: false`. A chapter marked `mode: prescriptive` needs no such
+# escape: quarry skips its site check outright.
+#
+#       with: { docs-repo: acme/docs-quarry, strict: false }
+#
+# Store QUARRY_APP_ID and QUARRY_APP_PRIVATE_KEY as organisation secrets
+# visible to the source repos, and allow the docs repo's workflows to be
+# reused from the organisation's other repositories (Settings > Actions >
+# General > Access).
+name: quarry-update
+on:
+  workflow_call:
+    inputs:
+      docs-repo:
+        description: The docs repo as owner/name, e.g. acme/docs-quarry
+        required: true
+        type: string
+      quarry-version:
+        description: Release tag of the quarry binary to install
+        required: false
+        type: string
+        default: v0.1.0
+      strict:
+        description: Refuse the import on an unverifiable site or a secret-shaped string
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      app-id:
+        description: GitHub App id with contents:write on the docs repo
+        required: true
+      app-private-key:
+        description: The App's private key (PEM)
+        required: true
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # The committer name is the folder-ownership rule: the nightly audit
+      # in the docs repo flags any commit touching a folder other than its
+      # committer's. The .invalid TLD keeps the address unlinkable.
+      GIT_AUTHOR_NAME: ${{ github.event.repository.name }}
+      GIT_COMMITTER_NAME: ${{ github.event.repository.name }}
+      GIT_AUTHOR_EMAIL: ${{ github.event.repository.name }}@quarry.invalid
+      GIT_COMMITTER_EMAIL: ${{ github.event.repository.name }}@quarry.invalid
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the stamp commit must be reachable for the ancestry check
+      - name: The docs repo's name without its owner
+        id: docs
+        # create-github-app-token's `repositories:` takes bare repo names.
+        env:
+          DOCS: ${{ inputs.docs-repo }}
+        run: echo "name=${DOCS#*/}" >> "$GITHUB_OUTPUT"
+      - name: Mint a docs-repo token
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.app-id }}
+          private-key: ${{ secrets.app-private-key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.docs.outputs.name }}
+      - name: Route the docs repo through the token
+        # The committed .quarry/.config keeps its plain URL; the token lives
+        # in the runner's git config, never on disk in the workspace. The
+        # rewrite names the docs repo alone, so this repo's own origin fetch
+        # still goes out under the checkout's credentials. Both URL shapes
+        # are mapped so an ssh URL in .config works too.
+        # Both rewrites are anchored on the .git suffix, which quarry init
+        # accepts but does not require. A config linked to
+        # https://github.com/acme/docs-quarry matches neither rewrite and the
+        # push leaves without a token, so link with the .git spelling. The
+        # suffix-less form is deliberately not mapped: insteadOf matches by
+        # prefix, so it would also capture a repo whose name merely starts
+        # with the docs repo's.
+        run: |
+          git config --global url."https://x-access-token:${TOKEN}@github.com/${DOCS}.git".insteadOf "https://github.com/${DOCS}.git"
+          git config --global --add url."https://x-access-token:${TOKEN}@github.com/${DOCS}.git".insteadOf "git@github.com:${DOCS}.git"
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+          DOCS: ${{ inputs.docs-repo }}
+      - name: Install quarry
+        run: curl -LsSf https://github.com/GentBajko/quarry/releases/download/${{ inputs.quarry-version }}/quarry-installer.sh | sh
+      - name: Import
+        # init takes no --url. The committed .quarry/.config already carries
+        # one, and a second spelling of the same repo refuses with "already
+        # linked to ..."; link each repo once locally and commit that file
+        # before adding this workflow.
+        # CI is the one place a leaked value must not pass, so strict is the
+        # default; a caller that needs the lenient path passes strict: false.
+        run: |
+          quarry init
+          quarry update ${{ inputs.strict && '--strict' || '' }}

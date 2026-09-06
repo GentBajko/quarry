@@ -15,6 +15,7 @@ mod index;
 mod observed;
 mod output;
 mod query;
+mod secrets;
 
 use std::io::Write;
 use std::process::ExitCode;

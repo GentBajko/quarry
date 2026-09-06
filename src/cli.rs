@@ -47,7 +47,7 @@ pub(crate) enum Command {
     },
     /// Register this repo in the docs repo and import its docs.
     Add {
-        /// Refuse the import when a declared site is not in the tree at HEAD.
+        /// Refuse to import when a site is not in the tree or a page holds a secret-shaped string.
         #[arg(long)]
         strict: bool,
     },
@@ -56,7 +56,7 @@ pub(crate) enum Command {
         /// Import over a diverged or unreachable stamp.
         #[arg(long)]
         force: bool,
-        /// Refuse the import when a declared site is not in the tree at HEAD.
+        /// Refuse to import when a site is not in the tree or a page holds a secret-shaped string.
         #[arg(long)]
         strict: bool,
     },

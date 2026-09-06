@@ -61,6 +61,19 @@ fn only_frontmatter_parses_yaml() {
 }
 
 #[test]
+fn only_secrets_knows_the_secret_shapes() {
+    for (name, text) in sources() {
+        if name == "secrets" {
+            continue;
+        }
+        assert!(
+            !text.contains("AKIA"),
+            "{name} carries a secret pattern; the one list lives in secrets"
+        );
+    }
+}
+
+#[test]
 fn only_the_index_talks_to_sqlite() {
     for (name, text) in sources() {
         if matches!(name.as_str(), "index" | "query" | "errors") {

@@ -160,26 +160,74 @@ lives in a repo you were not going to open.
 
 ## In CI
 
+One reusable workflow, held in the docs repo, does the install, the `init`
+and the `update`. Each source repo calls it in one block and holds no
+secret of its own:
+
 ```yaml
-on:
-  push:
-    branches: [main]
+on: { push: { branches: [main] } }
 jobs:
   quarry:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: curl -LsSf https://github.com/GentBajko/quarry/releases/download/v0.1.0/quarry-installer.sh | sh
-      - run: quarry init --url ${{ vars.QUARRY_DOCS_REPO }}
-      - run: quarry update
+    uses: acme/docs-quarry/.github/workflows/quarry-update.yml@main
+    with: { docs-repo: acme/docs-quarry }
+    secrets:
+      app-id: ${{ secrets.QUARRY_APP_ID }}
+      app-private-key: ${{ secrets.QUARRY_APP_PRIVATE_KEY }}
 ```
 
-Pin the installer to a tag rather than `latest`, so two hundred workflows
-do not all move the day a release ships. `quarry init` is a no-op when
-`.quarry/.config` is committed, which is the normal case.
+[`templates/quarry-update.yml`](templates/quarry-update.yml) is the
+workflow being called. Create a GitHub App with `contents: write`, install
+it on the organisation, and store its id and private key as organisation
+secrets; every job mints a token scoped to the docs repo and valid for an
+hour, so nothing long-lived sits in any repo. Its `quarry-version` input
+pins the installer to a release tag and defaults to `v0.1.0`, so two
+hundred callers do not all move the day a release ships. The workflow runs
+`quarry init` with no `--url`, so link each repo once locally and commit its
+`.quarry/.config`; init is then a no-op. The token reaches git through an
+`insteadOf` rule on the runner rather than through the URL, so the committed
+config keeps its plain URL, ssh or https. Both rewrites are anchored on the
+`.git` suffix, so link the docs repo with it:
+`quarry init --url https://github.com/acme/docs-quarry` also works locally,
+but that spelling matches neither rewrite and the CI push then goes out
+with no token.
 
-Add `--strict` to `quarry update` to fail the job when a declared `Site`
-path is not in the tree at that commit.
+**The committer is the folder.** The workflow sets `GIT_COMMITTER_NAME` to
+the calling repo's name, and every import touches that folder plus the root
+`00-index.md`. [`templates/quarry-audit.yml`](templates/quarry-audit.yml),
+run nightly in the docs repo, walks `git log --name-only` over the last 24
+hours and fails on any commit that broke that rule; a monorepo's target
+folders count as the calling repo's, because each carries a stamp whose
+`origin` ends in that repo's name, and the parent commit's stamp answers for
+a folder the commit removed. Its second job lists organisation repos
+with no folder in the docs repo, the consumer nobody registered. Where the
+host can enforce the rule on push, do that as well: a GitLab custom server
+hook or a GitHub Enterprise pre-receive hook runs the same loop the audit
+job runs, over `old..new` instead of `--since`. GitHub.com cannot, which is
+what the nightly job is for.
+
+**Same access group as the code.** Every page in the docs repo was read out
+of a source repo, so anyone who can read the docs repo can read a summary of
+all of them. Grant it to the group that already reads the code, and no wider.
+
+**`--strict` imports nothing it cannot vouch for.** The workflow's `strict`
+input defaults to true. `update --strict` and `add --strict` refuse, before
+writing anything, when a page holds a secret-shaped string, naming the file
+and the shape and never the string:
+
+```text
+docs/capstone/07-operations.md contains a github-token
+remove them from the docs before importing
+```
+
+Without `--strict` the same finding is a note and the import proceeds. The
+shapes are AWS access keys, GitHub tokens, Slack tokens, Stripe keys, Google
+API keys and PEM private-key headers; Capstone's `map check` greps for the
+same six, and its `redact` config key keeps matching values out of the
+operations chapter in the first place. A site the interfaces chapter names
+but the tree does not hold refuses under `--strict` the same way, unless the
+chapter is marked `mode: prescriptive`, which skips the site check
+altogether. A repo that wants those findings as notes rather than a refusal
+calls the workflow with `strict: false`.
 
 On pull requests, add a second job that runs `quarry init` and then
 `quarry check`; it needs the clone and nothing else, and exits 1 on a
@@ -382,8 +430,8 @@ notes without changing its exit code.
 | Command | What it does |
 | --- | --- |
 | `quarry init [--url] [--docs-dir] [--default-branch] [--name] [--force]` | Link this repo to a docs repo, write `.quarry/`, clone it shallowly. `--name <target> --docs-dir <dir>` registers one monorepo target, one call per target. `--force` relinks to a different docs repo |
-| `quarry add [--strict]` | Register this repo in the docs repo and import its docs. Running it twice is a no-op. `--strict` refuses when a declared site is not in the tree |
-| `quarry update [--force] [--strict]` | Copy the docs at `HEAD` into the docs repo, commit, push. `--force` imports over a diverged or unreachable stamp; `--strict` refuses when a declared site is not in the tree |
+| `quarry add [--strict]` | Register this repo in the docs repo and import its docs. Running it twice is a no-op. `--strict` refuses on an unverifiable site or a secret-shaped string |
+| `quarry update [--force] [--strict]` | Copy the docs at `HEAD` into the docs repo, commit, push. `--force` imports over a diverged or unreachable stamp; `--strict` refuses on an unverifiable site or a secret-shaped string |
 | `quarry sync` | Pull the docs repo clone, then rebuild the index |
 | `quarry remove` | Drop this repo's folder, reporting who still declares edges to it |
 | `quarry check` | Compare every produced contract's payload table with the fields each consumer records; exit 1 on a break |
@@ -585,9 +633,10 @@ Retrieval is SQLite FTS5 over the copied markdown. That is quick at a few
 thousand pages and untested at fifty thousand; the rebuild budget is one
 marked test, at ten seconds for five thousand pages.
 
-The docs repo has no CI of its own by design, so nothing garbage-collects
-a repo that stops pushing. Its folder simply keeps its last stamp, and
-`quarry docs list` shows the date going stale.
+The docs repo's own CI is the nightly audit in
+[`templates/quarry-audit.yml`](templates/quarry-audit.yml); nothing
+garbage-collects a repo that stops pushing. Its folder simply keeps its
+last stamp, and `quarry docs list` shows the date going stale.
 
 Windows is built and tested but thin in the field. macOS and Linux are the
 ones in daily use.

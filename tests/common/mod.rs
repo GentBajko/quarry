@@ -324,6 +324,20 @@ pub fn consumes_page(date: &str, from: &str, kind: &str, name: &str) -> String {
     )
 }
 
+/// Pattern-shaped, never valid: the checksum bytes are all 'a'.
+pub const FAKE_GITHUB_TOKEN: &str = "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+/// The header line alone; no key body follows it anywhere in the tests.
+pub const FAKE_PRIVATE_KEY_HEADER: &str = "-----BEGIN RSA PRIVATE KEY-----";
+/// Pattern-shaped, never valid: sixteen 'a' where the key bytes go.
+pub const FAKE_STRIPE_KEY: &str = "sk_test_aaaaaaaaaaaaaaaa";
+
+/// An operations chapter quoting one configuration value verbatim.
+pub fn operations_page(date: &str, value: &str) -> String {
+    format!(
+        "---\ngenerated_date: {date}\n---\n\n# Operations\n\n## Configuration\n\n| Name | Default |\n|---|---|\n| GITHUB_TOKEN | {value} |\n"
+    )
+}
+
 /// A page declaring one produced contract whose consumers are unknown.
 pub fn produces_unknown_page(date: &str, kind: &str, name: &str) -> String {
     produces_page(date, "unknown", kind, name)

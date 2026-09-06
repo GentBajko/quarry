@@ -17,7 +17,64 @@ on:
         type: string
         default: 24 hours ago
 jobs:
-  # committer-folders: added by the credentials and rollout fix.
+  committer-folders:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Every commit stays inside its committer's folder
+        env:
+          SINCE: ${{ inputs.since || '24 hours ago' }}
+        run: |
+          findings="$RUNNER_TEMP/findings.txt"
+          : > "$findings"
+          sha=""; who=""
+          # A monorepo commits one folder per workspace target, so a folder is
+          # also owned by the repo its stamp records: the origin's last segment
+          # is the committer name the update workflow sets. A removal deletes
+          # the stamp with the folder, so the parent commit answers for a path
+          # that is already gone at $1. Quarry lowercases the origin's last
+          # segment while GIT_COMMITTER_NAME keeps the repo's own case, so both
+          # sides are folded before the comparison; GitHub repo names differing
+          # only in case cannot coexist, so folding loses nothing.
+          lc() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+          owns() {
+            stamp=$(git show "$1:$2/.quarry-stamp" 2>/dev/null \
+                    || git show "$1^:$2/.quarry-stamp" 2>/dev/null || true)
+            origin=$(printf '%s' "$stamp" | sed -n 's/.*"origin":"\([^"]*\)".*/\1/p')
+            [ -n "$origin" ] && [ "$(lc "${origin##*/}")" = "$(lc "$3")" ]
+          }
+          git log --since="$SINCE" --name-only --format='commit %H%x09%cn' \
+          | while IFS= read -r line; do
+              case "$line" in
+                "commit "*)
+                  rest=${line#commit }
+                  sha=${rest%%$'\t'*}
+                  who=${rest#*$'\t'}
+                  ;;
+                "") ;;
+                00-index.md|observed-edges.json|.github/*) ;;
+                */*)
+                  top=${line%%/*}
+                  if [ "$(lc "$top")" != "$(lc "$who")" ] && ! owns "$sha" "$top" "$who"; then
+                    printf '%s (%s) touched %s\n' "${sha:0:7}" "$who" "$line" >> "$findings"
+                  fi
+                  ;;
+                *)
+                  printf '%s (%s) touched root file %s\n' "${sha:0:7}" "$who" "$line" >> "$findings"
+                  ;;
+              esac
+            done
+          if [ -s "$findings" ]; then
+            echo "commits outside their committer's folder since $SINCE:"
+            cat "$findings"
+            { echo "## quarry audit: committer-folder rule broken"; echo; sed 's/^/- /' "$findings"; } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "every commit since $SINCE stayed inside its committer's folder"
 
   unregistered-repos:
     runs-on: ubuntu-latest
