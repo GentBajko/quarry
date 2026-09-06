@@ -368,6 +368,43 @@ fn s20_a_kind_that_is_not_a_route_joins_on_the_name_as_written() {
 }
 
 #[test]
+fn s20_grpc_and_websocket_names_join_like_a_route() {
+    let w = quarry_world();
+    repo_with(
+        &w,
+        "record-store",
+        "2026-09-03",
+        &open_edges_page(
+            "2026-09-03",
+            &[("grpc", "UserService.GetUser"), ("ws", "WS /live-chat")],
+            &[],
+        ),
+    );
+    // A gRPC method spelled in another case, and a websocket verb the other
+    // side wrote in lower case: both are routed kinds, so both fold.
+    repo_with(
+        &w,
+        "report-builder",
+        "2026-09-01",
+        &open_edges_page(
+            "2026-09-01",
+            &[],
+            &[("grpc", "userservice.getuser"), ("ws", "ws /live-chat")],
+        ),
+    );
+    let deps = w.run(&["docs", "deps", "record-store", "--downstream"]);
+    let text = stdout(&deps);
+    assert!(
+        text.contains("grpc UserService.GetUser -> report-builder (resolved by name)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("ws WS /live-chat -> report-builder (resolved by name)"),
+        "{text}"
+    );
+}
+
+#[test]
 fn s20_a_rebuild_answers_the_same_way_twice() {
     let w = joined_world();
     repo_with(
