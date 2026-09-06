@@ -41,24 +41,60 @@ fn s5_an_unknown_repo_refuses_with_exit_one() {
 }
 
 #[test]
-fn s5_queries_never_pull_but_sync_does() {
+fn s5_a_query_pulls_before_it_answers() {
     let it = wired();
     let other = it.w.other_repo("identity-api");
     it.w.write_docs_in(&other, &[("00-index.md", &index_page("2026-09-02"))]);
     it.w.commit_push_in(&other, "docs");
     assert!(it.w.run_in(&other, &["add"]).status.success());
-    let before = it.w.run(&["docs", "list"]);
+    let out = it.w.run(&["docs", "list"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(
-        !stdout(&before).contains("identity-api"),
-        "a query pulled: {}",
-        stdout(&before)
+        stdout(&out).contains("identity-api"),
+        "a query answered from a stale clone: {}",
+        stdout(&out)
     );
-    assert!(it.w.run(&["sync"]).status.success());
-    let after = it.w.run(&["docs", "list"]);
+}
+
+#[test]
+fn s5_offline_answers_from_the_clone_without_pulling() {
+    let it = wired();
+    let other = it.w.other_repo("identity-api");
+    it.w.write_docs_in(&other, &[("00-index.md", &index_page("2026-09-02"))]);
+    it.w.commit_push_in(&other, "docs");
+    assert!(it.w.run_in(&other, &["add"]).status.success());
+    let out = it.w.run(&["--offline", "docs", "list"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(
-        stdout(&after).contains("identity-api"),
-        "{}",
-        stdout(&after)
+        !stdout(&out).contains("identity-api"),
+        "--offline pulled: {}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&it.w.run(&["docs", "list"])).contains("identity-api"),
+        "the next online query should see it"
+    );
+}
+
+#[test]
+fn s5_the_offline_env_var_matches_the_flag() {
+    let it = wired();
+    let other = it.w.other_repo("identity-api");
+    it.w.write_docs_in(&other, &[("00-index.md", &index_page("2026-09-02"))]);
+    it.w.commit_push_in(&other, "docs");
+    assert!(it.w.run_in(&other, &["add"]).status.success());
+    let out = it.w.run_env(&["docs", "list"], &[("QUARRY_OFFLINE", "1")]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(
+        !stdout(&out).contains("identity-api"),
+        "QUARRY_OFFLINE pulled: {}",
+        stdout(&out)
+    );
+    let empty = it.w.run_env(&["docs", "list"], &[("QUARRY_OFFLINE", "")]);
+    assert!(
+        stdout(&empty).contains("identity-api"),
+        "an empty QUARRY_OFFLINE should not mean offline: {}",
+        stdout(&empty)
     );
 }
 
@@ -134,4 +170,28 @@ fn s5_queries_work_without_the_network() {
     let out = it.w.run(&["docs", "list"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(stdout(&out).contains("ingest-api"), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("could not reach the docs repo"),
+        "an unreachable remote should say so: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn s5_an_unreachable_remote_is_a_note_in_json_not_a_failure() {
+    let it = wired();
+    let remote = it.w.base().join("remotes/docs-quarry.git");
+    std::fs::rename(&remote, it.w.base().join("remotes/docs-quarry.gone")).expect("move remote");
+    let out =
+        it.w.run(&["--json", "docs", "deps", "ingest-api", "--downstream"]);
+    assert_eq!(code(&out), 0, "{}", stdout(&out));
+    let value: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("json");
+    assert_eq!(value["ok"], serde_json::Value::Bool(true));
+    let notes = value["notes"].as_array().expect("notes");
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.as_str().unwrap_or_default().contains("could not reach")),
+        "{value}"
+    );
 }

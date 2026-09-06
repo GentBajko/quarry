@@ -12,6 +12,10 @@ use crate::query::{DepsResult, PathResult, RepoShow, SearchHit, SectionHit};
 pub(crate) struct Meta {
     pub(crate) built_at_commit: Option<String>,
     pub(crate) synced_at: Option<String>,
+    // A read command refreshes the clone first and answers either way, so a
+    // failed refresh is reported here rather than raised.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -127,11 +131,16 @@ pub(crate) fn render(response: &Response, json: bool, stale_note: Option<String>
             "ok": true,
             "built_at_commit": response.meta.built_at_commit,
             "synced_at": response.meta.synced_at,
+            "notes": response.meta.notes,
             "result": payload_value(&response.payload),
         });
         return format!("{value}\n");
     }
     let mut text = String::new();
+    for note in &response.meta.notes {
+        text.push_str(note);
+        text.push('\n');
+    }
     if let Some(note) = stale_note {
         text.push_str(&note);
         text.push('\n');

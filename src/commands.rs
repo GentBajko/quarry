@@ -448,7 +448,7 @@ fn payload_of(per_target: bool, mut outs: Vec<WriteOut>) -> Payload {
     }
 }
 
-pub(crate) fn check(ctx: &Context) -> Result<Response> {
+pub(crate) fn check(ctx: &Context, offline: bool) -> Result<Response> {
     let config = ctx.config()?.clone();
     let identity = ctx.identity()?.clone();
     let clone = ctx.require_clone()?;
@@ -468,6 +468,7 @@ pub(crate) fn check(ctx: &Context) -> Result<Response> {
     // root index is absent. So the target is named whenever targets exist, not
     // only when there are two or more of them.
     let per_target = !config.targets.is_empty();
+    let refresh_notes = refresh_for_query(ctx, offline);
     let opened = index::open_current(ctx)?;
     let mut merged = check::CheckOut {
         repo: identity.name.clone(),
@@ -539,7 +540,7 @@ pub(crate) fn check(ctx: &Context) -> Result<Response> {
         merged.notes.extend(out.notes);
     }
     Ok(Response {
-        meta: meta_of(&opened),
+        meta: meta_with(&opened, refresh_notes),
         payload: Payload::Check(merged),
     })
 }
@@ -774,9 +775,10 @@ pub(crate) fn docs_index(ctx: &Context, force: bool) -> Result<Response> {
     })
 }
 
-pub(crate) fn docs_list(ctx: &Context, repo: Option<String>) -> Result<Response> {
+pub(crate) fn docs_list(ctx: &Context, repo: Option<String>, offline: bool) -> Result<Response> {
+    let notes = refresh_for_query(ctx, offline);
     let opened = index::open_current(ctx)?;
-    let meta = meta_of(&opened);
+    let meta = meta_with(&opened, notes);
     match repo {
         None => Ok(Response {
             meta,
@@ -803,18 +805,25 @@ pub(crate) fn docs_list(ctx: &Context, repo: Option<String>) -> Result<Response>
     }
 }
 
-pub(crate) fn docs_show(ctx: &Context, repo: &str) -> Result<Response> {
+pub(crate) fn docs_show(ctx: &Context, repo: &str, offline: bool) -> Result<Response> {
+    let notes = refresh_for_query(ctx, offline);
     let opened = index::open_current(ctx)?;
     Ok(Response {
-        meta: meta_of(&opened),
+        meta: meta_with(&opened, notes),
         payload: Payload::Show(Box::new(query::show(&opened, repo)?)),
     })
 }
 
-pub(crate) fn docs_section(ctx: &Context, repo: &str, heading: &str) -> Result<Response> {
+pub(crate) fn docs_section(
+    ctx: &Context,
+    repo: &str,
+    heading: &str,
+    offline: bool,
+) -> Result<Response> {
+    let notes = refresh_for_query(ctx, offline);
     let opened = index::open_current(ctx)?;
     Ok(Response {
-        meta: meta_of(&opened),
+        meta: meta_with(&opened, notes),
         payload: Payload::Section(Box::new(query::section(&opened, repo, heading)?)),
     })
 }
@@ -824,10 +833,12 @@ pub(crate) fn docs_search(
     term: &str,
     repo: Option<&str>,
     limit: u32,
+    offline: bool,
 ) -> Result<Response> {
+    let notes = refresh_for_query(ctx, offline);
     let opened = index::open_current(ctx)?;
     Ok(Response {
-        meta: meta_of(&opened),
+        meta: meta_with(&opened, notes),
         payload: Payload::Search(query::search(&opened, term, repo, limit)?),
     })
 }
@@ -837,18 +848,21 @@ pub(crate) fn docs_deps(
     repo: &str,
     direction: Direction,
     depth: u32,
+    offline: bool,
 ) -> Result<Response> {
+    let notes = refresh_for_query(ctx, offline);
     let opened = index::open_current(ctx)?;
     Ok(Response {
-        meta: meta_of(&opened),
+        meta: meta_with(&opened, notes),
         payload: Payload::Deps(Box::new(query::deps(&opened, repo, direction, depth)?)),
     })
 }
 
-pub(crate) fn docs_path(ctx: &Context, from: &str, to: &str) -> Result<Response> {
+pub(crate) fn docs_path(ctx: &Context, from: &str, to: &str, offline: bool) -> Result<Response> {
+    let notes = refresh_for_query(ctx, offline);
     let opened = index::open_current(ctx)?;
     Ok(Response {
-        meta: meta_of(&opened),
+        meta: meta_with(&opened, notes),
         payload: Payload::Path(Box::new(query::path(&opened, from, to)?)),
     })
 }
@@ -857,7 +871,45 @@ fn meta_of(index: &index::Index) -> Meta {
     Meta {
         built_at_commit: Some(index.built_at_commit.clone()),
         synced_at: index.synced_at.clone(),
+        notes: Vec::new(),
     }
+}
+
+fn meta_with(index: &index::Index, notes: Vec<String>) -> Meta {
+    Meta {
+        notes,
+        ..meta_of(index)
+    }
+}
+
+/// Pull the docs clone before a read, so a query answers from what the other
+/// repos have pushed rather than from whatever this machine last happened to
+/// fetch. An unreachable remote is a note and never a refusal: the clone is a
+/// complete answer on its own, and a query that fails offline would be worse
+/// than one that answers a few minutes behind.
+fn refresh_for_query(ctx: &Context, offline: bool) -> Vec<String> {
+    if offline || ctx.require_clone().is_err() {
+        // A missing clone is `open_current`'s refusal to raise, not this one's.
+        return Vec::new();
+    }
+    let mut notes = Vec::new();
+    match docsrepo::refresh(ctx) {
+        Ok(discarded) => {
+            if discarded.commits > 0 || discarded.dirty {
+                notes.push(format!(
+                    "discarded {} local commits / changes in the docs clone",
+                    discarded.commits
+                ));
+            }
+            if let Err(e) = stamp_sync(ctx) {
+                notes.push(format!("could not record the sync time: {e}"));
+            }
+        }
+        Err(e) => notes.push(format!(
+            "could not reach the docs repo ({e}); answering from the local clone"
+        )),
+    }
+    notes
 }
 
 fn reindex(ctx: &Context) -> Result<()> {

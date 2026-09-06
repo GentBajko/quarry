@@ -21,6 +21,9 @@ pub(crate) struct Cli {
     /// Echo every git command to stderr.
     #[arg(long, global = true)]
     pub(crate) verbose: bool,
+    /// Answer from the local clone without pulling first.
+    #[arg(long, global = true)]
+    pub(crate) offline: bool,
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
 }
@@ -143,6 +146,7 @@ pub(crate) fn run(cli: &Cli) -> Result<Response> {
     let ctx = Context::build(&ContextArgs {
         verbose: cli.verbose,
     })?;
+    let offline = cli.offline || env_offline();
     match command {
         Command::Init {
             url,
@@ -162,16 +166,16 @@ pub(crate) fn run(cli: &Cli) -> Result<Response> {
         Command::Update { force, strict } => commands::update(&ctx, *force, *strict),
         Command::Sync => commands::sync(&ctx),
         Command::Remove => commands::remove(&ctx),
-        Command::Check => commands::check(&ctx),
+        Command::Check => commands::check(&ctx, offline),
         Command::Docs { command } => match command {
             None => Ok(Response::bare(Payload::Help(help_text(Some("docs"))))),
-            Some(DocsCommand::List { repo }) => commands::docs_list(&ctx, repo.clone()),
-            Some(DocsCommand::Show { repo }) => commands::docs_show(&ctx, repo),
+            Some(DocsCommand::List { repo }) => commands::docs_list(&ctx, repo.clone(), offline),
+            Some(DocsCommand::Show { repo }) => commands::docs_show(&ctx, repo, offline),
             Some(DocsCommand::Section { repo, heading }) => {
-                commands::docs_section(&ctx, repo, heading)
+                commands::docs_section(&ctx, repo, heading, offline)
             }
             Some(DocsCommand::Search { term, repo, limit }) => {
-                commands::docs_search(&ctx, term, repo.as_deref(), *limit)
+                commands::docs_search(&ctx, term, repo.as_deref(), *limit, offline)
             }
             Some(DocsCommand::Deps {
                 repo,
@@ -187,10 +191,23 @@ pub(crate) fn run(cli: &Cli) -> Result<Response> {
                     Direction::Upstream
                 },
                 *depth,
+                offline,
             ),
-            Some(DocsCommand::Path { from, to }) => commands::docs_path(&ctx, from, to),
+            Some(DocsCommand::Path { from, to }) => commands::docs_path(&ctx, from, to, offline),
             Some(DocsCommand::Index { force }) => commands::docs_index(&ctx, *force),
         },
+    }
+}
+
+// Read as a plain switch rather than through clap's `env`, which would parse
+// the variable's value and turn `QUARRY_OFFLINE=` into a parse error.
+fn env_offline() -> bool {
+    match std::env::var("QUARRY_OFFLINE") {
+        Ok(value) => {
+            let value = value.trim().to_ascii_lowercase();
+            !(value.is_empty() || value == "0" || value == "false")
+        }
+        Err(_) => false,
     }
 }
 
