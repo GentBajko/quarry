@@ -370,10 +370,11 @@ fn human(payload: &Payload) -> String {
                     marks.push_str(" (cycle)");
                 }
                 match edge.declared_by.as_str() {
-                    "both" | "observed" => {}
+                    "both" | "observed" | "joined" => {}
                     "by-name" => marks.push_str(" (by name only)"),
                     side => marks.push_str(&format!(" (declared by {side} only)")),
                 }
+                marks.push_str(resolved_by(edge.resolved_by.as_deref()));
                 marks.push_str(&declared_as(edge.as_declared.as_deref()));
                 if edge.site_unverified {
                     marks.push_str(" (site unverified)");
@@ -452,13 +453,35 @@ fn human(payload: &Payload) -> String {
                 }
                 text.push('\n');
             }
+            for entry in &report.ambiguous {
+                let (side, partners) = if entry.direction == "produces" {
+                    ("produced by", "consumers")
+                } else {
+                    ("consumed by", "producers")
+                };
+                text.push_str(&format!(
+                    "unresolved: {} {} {side} {}: {} {partners}, {}\n",
+                    entry.kind,
+                    entry.name,
+                    entry.repo,
+                    entry.candidates.len(),
+                    entry.candidates.join(", ")
+                ));
+            }
             text
         }
         Payload::Check(out) => {
             let mut text = String::new();
             for contract in &out.contracts {
+                let source = match &contract.model {
+                    Some(model) => format!(
+                        " (fields from {} § {model})",
+                        crate::frontmatter::MODELS_PAGE
+                    ),
+                    None => String::new(),
+                };
                 text.push_str(&format!(
-                    "{} produces {} {}\n",
+                    "{} produces {} {}{source}\n",
                     contract.target.as_deref().unwrap_or(&out.repo),
                     contract.kind,
                     contract.name
@@ -560,7 +583,8 @@ fn observed_mark(
 }
 
 fn edge_marks(edge: &Edge, file_present: bool) -> String {
-    let mut marks = declared_as(edge.as_declared.as_deref());
+    let mut marks = resolved_by(edge.resolved_by.as_deref()).to_string();
+    marks.push_str(&declared_as(edge.as_declared.as_deref()));
     if edge.site_unverified {
         marks.push_str(" (site unverified)");
     }
@@ -571,6 +595,13 @@ fn edge_marks(edge: &Edge, file_present: bool) -> String {
         file_present,
     ));
     marks
+}
+
+fn resolved_by(resolved_by: Option<&str>) -> &'static str {
+    match resolved_by {
+        Some("name") => " (resolved by name)",
+        _ => "",
+    }
 }
 
 fn declared_as(as_declared: Option<&str>) -> String {
@@ -674,6 +705,7 @@ mod tests {
             contracts: vec![crate::check::ContractOut {
                 kind: "http".to_string(),
                 name: "GET /records".to_string(),
+                model: None,
                 consumers: vec![crate::check::ConsumerOut {
                     repo: "report-builder".to_string(),
                     fields: vec![

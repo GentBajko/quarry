@@ -55,6 +55,8 @@ pub(crate) struct DepEdge {
     pub(crate) by_name: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) as_declared: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) resolved_by: Option<String>,
     pub(crate) observed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) last_seen: Option<String>,
@@ -315,6 +317,7 @@ pub(crate) fn deps(
                 site_unverified: edge.site_unverified,
                 by_name: false,
                 as_declared: edge.as_declared.clone(),
+                resolved_by: edge.resolved_by.clone(),
                 observed: edge.observed,
                 last_seen: edge.last_seen.clone(),
             });
@@ -351,6 +354,7 @@ pub(crate) fn deps(
                     site_unverified: false,
                     by_name: true,
                     as_declared: None,
+                    resolved_by: None,
                     observed: false,
                     last_seen: None,
                 });

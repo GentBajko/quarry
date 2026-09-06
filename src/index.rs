@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::context::Context;
 use crate::docsrepo;
@@ -13,14 +13,14 @@ use crate::errors::{QuarryError, Result};
 use crate::frontmatter;
 use crate::observed;
 
-pub(crate) const SCHEMA_VERSION: i64 = 2;
+pub(crate) const SCHEMA_VERSION: i64 = 3;
 
 type EdgeKey = (String, String, String, String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Declaration {
     owner: String,
-    other: String,
+    other: Option<String>,
     kind: String,
     name: String,
     produces: bool,
@@ -31,11 +31,22 @@ struct Declaration {
 struct EdgeSides {
     by_producer: bool,
     by_consumer: bool,
+    joined: bool,
     via: BTreeSet<String>,
     declared_as: BTreeSet<String>,
     observed: bool,
     last_seen: Option<String>,
 }
+
+/// One repo's rows that named no far end, under one join key.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct JoinRow {
+    name: String,
+    via: BTreeSet<String>,
+}
+
+/// Join key `(kind, normalised name)` to the repos holding such a row.
+type JoinRows = BTreeMap<(String, String), BTreeMap<String, JoinRow>>;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct NameRegistry {
@@ -49,6 +60,15 @@ pub(crate) struct Unresolved {
     pub(crate) declared: String,
     pub(crate) via: Vec<String>,
     pub(crate) nearest: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Ambiguous {
+    pub(crate) direction: String,
+    pub(crate) kind: String,
+    pub(crate) name: String,
+    pub(crate) repo: String,
+    pub(crate) candidates: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -85,11 +105,12 @@ CREATE TABLE edges (
   to_repo TEXT NOT NULL,
   kind TEXT NOT NULL,
   name TEXT NOT NULL,
-  declared_by TEXT NOT NULL CHECK (declared_by IN ('producer','consumer','both','observed')),
+  declared_by TEXT NOT NULL CHECK (declared_by IN ('producer','consumer','both','observed','joined')),
   via TEXT NOT NULL,
   missing INTEGER NOT NULL DEFAULT 0,
   site_unverified INTEGER NOT NULL DEFAULT 0,
   as_declared TEXT,
+  resolved_by TEXT,
   observed INTEGER NOT NULL DEFAULT 0,
   last_seen TEXT,
   PRIMARY KEY (from_repo, to_repo, kind, name)
@@ -133,6 +154,9 @@ pub(crate) struct Edge {
     pub(crate) site_unverified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) as_declared: Option<String>,
+    // `name` on an edge the join made; absent on every edge a page declared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) resolved_by: Option<String>,
     pub(crate) observed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) last_seen: Option<String>,
@@ -171,6 +195,7 @@ pub(crate) struct RebuildReport {
     pub(crate) warnings: Vec<String>,
     pub(crate) rebuilt: bool,
     pub(crate) unresolved: Vec<Unresolved>,
+    pub(crate) ambiguous: Vec<Ambiguous>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) observed: Option<ObservedMeta>,
 }
@@ -359,7 +384,12 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                     } else {
                         scan.consumes += 1;
                     }
-                    if edge.produces && frontmatter::is_unknown_target(&edge.other) {
+                    if edge.produces
+                        && edge
+                            .other
+                            .as_deref()
+                            .is_some_and(frontmatter::is_unknown_target)
+                    {
                         publications_acc
                             .entry((name.clone(), edge.kind, edge.name))
                             .or_default()
@@ -393,18 +423,37 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
         report.warnings.extend(alias_warnings);
         let mut unresolved: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut merged: BTreeMap<EdgeKey, EdgeSides> = BTreeMap::new();
+        let mut open_producers: JoinRows = BTreeMap::new();
+        let mut open_consumers: JoinRows = BTreeMap::new();
         for declaration in declarations {
-            let resolved = resolve_name(&registry, &declaration.other);
+            let Some(declared) = declaration.other.clone() else {
+                let side = if declaration.produces {
+                    &mut open_producers
+                } else {
+                    &mut open_consumers
+                };
+                side.entry(join_key(&declaration.kind, &declaration.name))
+                    .or_default()
+                    .entry(declaration.owner.clone())
+                    .or_insert_with(|| JoinRow {
+                        name: declaration.name.clone(),
+                        via: BTreeSet::new(),
+                    })
+                    .via
+                    .insert(declaration.via.clone());
+                continue;
+            };
+            let resolved = resolve_name(&registry, &declared);
             let other = match &resolved {
                 Some(name) => name.clone(),
                 None => {
-                    if !frontmatter::is_unknown_target(&declaration.other) {
+                    if !frontmatter::is_unknown_target(&declared) {
                         unresolved
-                            .entry(declaration.other.clone())
+                            .entry(declared.clone())
                             .or_default()
                             .insert(declaration.via.clone());
                     }
-                    declaration.other.clone()
+                    declared.clone()
                 }
             };
             let (from, to) = if declaration.produces {
@@ -421,10 +470,19 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                 entry.by_consumer = true;
             }
             entry.via.insert(declaration.via);
-            if resolved.as_deref().is_some_and(|r| r != declaration.other) {
-                entry.declared_as.insert(declaration.other);
+            if resolved.as_deref().is_some_and(|r| r != declared) {
+                entry.declared_as.insert(declared);
             }
         }
+        let mut ambiguous: Vec<Ambiguous> = Vec::new();
+        let paired = join_by_name(
+            &open_consumers,
+            &open_producers,
+            &mut merged,
+            &mut ambiguous,
+        );
+        publish_unjoined(&open_producers, &paired, &mut publications_acc);
+        report.ambiguous = ambiguous;
         let observed_file = observed::read(clone);
         let mut observed_rows: u32 = 0;
         if let Some(file) = &observed_file {
@@ -467,8 +525,10 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                 (true, true) => "both",
                 (true, false) => "producer",
                 (false, true) => "consumer",
+                (false, false) if sides.joined => "joined",
                 (false, false) => "observed",
             };
+            let resolved_by = (declared_by == "joined").then(|| "name".to_string());
             let missing = !names.contains(&from) || !names.contains(&to);
             let key = format!("{kind} {name}");
             let site_unverified = unverified.contains(&(from.clone(), key.clone()))
@@ -487,8 +547,8 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                 )
             };
             transaction.execute(
-                "INSERT OR REPLACE INTO edges (from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, observed, last_seen) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-                rusqlite::params![from, to, kind, name, declared_by, via_json, missing as i64, site_unverified as i64, as_declared, sides.observed as i64, sides.last_seen],
+                "INSERT OR REPLACE INTO edges (from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, resolved_by, observed, last_seen) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                rusqlite::params![from, to, kind, name, declared_by, via_json, missing as i64, site_unverified as i64, as_declared, resolved_by, sides.observed as i64, sides.last_seen],
             )?;
             report.edges += 1;
         }
@@ -517,6 +577,14 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                 declared,
             })
             .collect();
+        // A later `docs index` on a current database answers from here rather
+        // than rebuilding, so the digest that asks about these rows sees them.
+        if !report.ambiguous.is_empty() {
+            transaction.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('ambiguous', ?1)",
+                [serde_json::to_string(&report.ambiguous)?],
+            )?;
+        }
         transaction.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('built_at_commit', ?1)",
             [head],
@@ -686,6 +754,92 @@ pub(crate) fn build_registry(
     )
 }
 
+// Routed kinds join on a normalised route; every other kind joins on the name
+// as written, since only a route has a spelling the two ends can disagree on.
+fn join_key(kind: &str, name: &str) -> (String, String) {
+    let key = if matches!(kind, "http" | "ws" | "wss" | "grpc") {
+        frontmatter::normalize_route(name)
+    } else {
+        name.trim().to_string()
+    };
+    (kind.to_string(), key)
+}
+
+// The join runs over consumer rows alone. A producer's edges are the ones its
+// consumers claim, so one API four repos read is four edges rather than an
+// ambiguity. Only a consumer can be ambiguous, and it is when two repos publish
+// the key it reads and nothing says which one it calls. Returns the producer
+// rows a consumer claimed.
+fn join_by_name(
+    consumers: &JoinRows,
+    producers: &JoinRows,
+    merged: &mut BTreeMap<EdgeKey, EdgeSides>,
+    ambiguous: &mut Vec<Ambiguous>,
+) -> BTreeSet<(String, String, String)> {
+    let mut paired: BTreeSet<(String, String, String)> = BTreeSet::new();
+    let empty: BTreeMap<String, JoinRow> = BTreeMap::new();
+    for ((kind, key), owners) in consumers {
+        let across = producers
+            .get(&(kind.clone(), key.clone()))
+            .unwrap_or(&empty);
+        for (consumer, row) in owners {
+            let candidates: Vec<String> =
+                across.keys().filter(|r| *r != consumer).cloned().collect();
+            if candidates.len() > 1 {
+                ambiguous.push(Ambiguous {
+                    direction: "consumes".to_string(),
+                    kind: kind.clone(),
+                    name: row.name.clone(),
+                    repo: consumer.clone(),
+                    candidates,
+                });
+                continue;
+            }
+            let Some((producer, made)) = candidates
+                .first()
+                .and_then(|only| across.get_key_value(only))
+            else {
+                continue;
+            };
+            // The producer's spelling names the edge, however the consumer
+            // wrote the route.
+            let entry = merged
+                .entry((
+                    producer.clone(),
+                    consumer.clone(),
+                    kind.clone(),
+                    made.name.clone(),
+                ))
+                .or_default();
+            entry.joined = true;
+            entry.via.extend(row.via.iter().cloned());
+            entry.via.extend(made.via.iter().cloned());
+            paired.insert((producer.clone(), kind.clone(), key.clone()));
+        }
+    }
+    paired
+}
+
+// A produces row no consumer claimed is a publication, the same as one written
+// `to: unknown`.
+fn publish_unjoined(
+    producers: &JoinRows,
+    paired: &BTreeSet<(String, String, String)>,
+    publications: &mut BTreeMap<(String, String, String), BTreeSet<String>>,
+) {
+    for ((kind, key), owners) in producers {
+        for (owner, row) in owners {
+            if paired.contains(&(owner.clone(), kind.clone(), key.clone())) {
+                continue;
+            }
+            publications
+                .entry((owner.clone(), kind.clone(), row.name.clone()))
+                .or_default()
+                .extend(row.via.iter().cloned());
+        }
+    }
+}
+
 fn join_claimants(claimants: &BTreeSet<String>) -> String {
     let list: Vec<&str> = claimants.iter().map(String::as_str).collect();
     match list.split_last() {
@@ -753,6 +907,13 @@ impl Index {
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 
+    pub(crate) fn ambiguous(&self) -> Result<Vec<Ambiguous>> {
+        let Some(rows) = read_meta(&self.connection, "ambiguous")? else {
+            return Ok(Vec::new());
+        };
+        Ok(serde_json::from_str(&rows).unwrap_or_default())
+    }
+
     pub(crate) fn has_repo(&self, repo: &str) -> Result<bool> {
         let mut statement = self
             .connection
@@ -780,9 +941,9 @@ impl Index {
 
     pub(crate) fn edges(&self, repo: &str, downstream: bool) -> Result<Vec<Edge>> {
         let sql = if downstream {
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, observed, last_seen FROM edges WHERE from_repo = ?1 ORDER BY to_repo, kind, name"
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, resolved_by, observed, last_seen FROM edges WHERE from_repo = ?1 ORDER BY to_repo, kind, name"
         } else {
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, observed, last_seen FROM edges WHERE to_repo = ?1 ORDER BY from_repo, kind, name"
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, resolved_by, observed, last_seen FROM edges WHERE to_repo = ?1 ORDER BY from_repo, kind, name"
         };
         let mut statement = self.connection.prepare(sql)?;
         let rows = statement.query_map([repo], row_to_edge)?;
@@ -791,7 +952,7 @@ impl Index {
 
     pub(crate) fn edges_touching(&self, repo: &str) -> Result<Vec<Edge>> {
         let mut statement = self.connection.prepare(
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, observed, last_seen FROM edges WHERE from_repo = ?1 OR to_repo = ?1 ORDER BY from_repo, to_repo, kind, name",
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, resolved_by, observed, last_seen FROM edges WHERE from_repo = ?1 OR to_repo = ?1 ORDER BY from_repo, to_repo, kind, name",
         )?;
         let rows = statement.query_map([repo], row_to_edge)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -830,8 +991,9 @@ fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<Edge> {
         missing: row.get::<_, i64>(6)? != 0,
         site_unverified: row.get::<_, i64>(7)? != 0,
         as_declared: row.get(8)?,
-        observed: row.get::<_, i64>(9)? != 0,
-        last_seen: row.get(10)?,
+        resolved_by: row.get(9)?,
+        observed: row.get::<_, i64>(10)? != 0,
+        last_seen: row.get(11)?,
     })
 }
 

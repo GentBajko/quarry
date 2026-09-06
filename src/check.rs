@@ -7,7 +7,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::errors::Result;
-use crate::frontmatter::{self, INTERFACES_PAGE, Section, Table};
+use crate::frontmatter::{self, INTERFACES_PAGE, MODELS_PAGE, Section, Table};
 use crate::index::{Edge, Index};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +22,8 @@ pub(crate) struct ProducedContract {
     pub(crate) kind: String,
     pub(crate) name: String,
     pub(crate) fields: Option<Vec<PayloadField>>,
+    // The entity the fields were read from, when they came from 02-models.md.
+    pub(crate) model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +72,8 @@ pub(crate) struct ConsumerOut {
 pub(crate) struct ContractOut {
     pub(crate) kind: String,
     pub(crate) name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) model: Option<String>,
     pub(crate) consumers: Vec<ConsumerOut>,
     // Set whenever monorepo targets are configured; the target, not the repo,
     // is the producer name consumers write.
@@ -161,8 +165,44 @@ fn yes_no(flag: bool) -> &'static str {
     if flag { "yes" } else { "no" }
 }
 
-/// The contracts this repo's chapter says it produces, with their payload tables.
-pub(crate) fn produced_contracts(text: &str) -> (Vec<ProducedContract>, Vec<String>) {
+/// The entity a payload section names instead of listing fields, as
+/// `Model: <Entity>` on a line of its own.
+pub(crate) fn model_line(body: &str) -> Option<String> {
+    for line in body.lines() {
+        let line = line.trim().trim_matches(|c| c == '*' || c == '_');
+        let Some(rest) = line.get(..6) else {
+            continue;
+        };
+        if !rest.eq_ignore_ascii_case("model:") {
+            continue;
+        }
+        let entity = line[6..].trim().trim_matches('`').trim();
+        if !entity.is_empty() {
+            return Some(entity.to_string());
+        }
+    }
+    None
+}
+
+/// The fields of one `### <Entity>` section of `02-models.md`. A `[]` suffix
+/// names the same entity, so it changes nothing.
+pub(crate) fn model_fields(models: &str, entity: &str) -> Option<Vec<PayloadField>> {
+    let base = entity.trim().trim_end_matches("[]").trim();
+    let parsed = frontmatter::parse(models);
+    let sections: Vec<Section> = frontmatter::sections_of(&parsed.body)
+        .into_iter()
+        .filter(|section| section.level >= 3)
+        .collect();
+    let hit = find_contract(&sections, base)?;
+    fields_of(&frontmatter::table_of(&hit.body)?)
+}
+
+/// The contracts this repo's chapter says it produces, with their payload
+/// tables or the model each row points at.
+pub(crate) fn produced_contracts(
+    text: &str,
+    models: Option<&str>,
+) -> (Vec<ProducedContract>, Vec<String>) {
     let parsed = frontmatter::parse(text);
     let mut warnings: Vec<String> = parsed.warning.iter().cloned().collect();
     let (edges, edge_warnings) =
@@ -180,13 +220,42 @@ pub(crate) fn produced_contracts(text: &str) -> (Vec<ProducedContract>, Vec<Stri
         {
             continue;
         }
-        let fields = find_contract(&sections, &edge.name)
+        let section = find_contract(&sections, &edge.name);
+        let table = section
             .and_then(|section| frontmatter::table_of(&section.body))
             .and_then(|table| fields_of(&table));
+        // `<Entity>[]` names the same section as `<Entity>`.
+        let named = edge
+            .schema
+            .clone()
+            .or_else(|| section.and_then(|section| model_line(&section.body)))
+            .map(|entity| entity.trim_end_matches("[]").trim().to_string())
+            .filter(|entity| !entity.is_empty());
+        let (fields, model) = match (table, named) {
+            (Some(table), Some(entity)) => {
+                warnings.push(format!(
+                    "{} {} lists fields and names model {entity}; the table wins",
+                    edge.kind, edge.name
+                ));
+                (Some(table), None)
+            }
+            (Some(table), None) => (Some(table), None),
+            (None, Some(entity)) => match models.and_then(|text| model_fields(text, &entity)) {
+                Some(fields) => (Some(fields), Some(entity)),
+                None => {
+                    warnings.push(format!(
+                        "model {entity} not in {MODELS_PAGE}; nothing to compare"
+                    ));
+                    (None, None)
+                }
+            },
+            (None, None) => (None, None),
+        };
         contracts.push(ProducedContract {
             kind: edge.kind,
             name: edge.name,
             fields,
+            model,
         });
     }
     (contracts, warnings)
@@ -256,6 +325,7 @@ pub(crate) fn run(
     index: &Index,
     repo: &str,
     producer_text: Option<&str>,
+    models_text: Option<&str>,
     clone: &Path,
 ) -> Result<CheckOut> {
     let mut out = CheckOut {
@@ -271,7 +341,7 @@ pub(crate) fn run(
         return Ok(out);
     }
     let produced: Option<Vec<ProducedContract>> = producer_text.map(|text| {
-        let (contracts, warnings) = produced_contracts(text);
+        let (contracts, warnings) = produced_contracts(text, models_text);
         out.warnings.extend(
             warnings
                 .into_iter()
@@ -337,6 +407,7 @@ pub(crate) fn run(
         let mut contract = ContractOut {
             kind: kind.clone(),
             name: name.clone(),
+            model: row.and_then(|row| row.model.clone()),
             consumers: Vec::new(),
             target: None,
         };
@@ -530,7 +601,7 @@ mod tests {
     #[test]
     fn s14_produced_contracts_dedupe_rows_that_share_a_name() {
         let page = "---\ngenerated_date: 2026-09-03\n---\n\n## Produces\n\n| Kind | Name | To |\n|---|---|---|\n| http | GET /records | report-builder |\n| http | GET /records | chart-service |\n| sqs | audit-log | report-builder |\n\n### GET /records\n\n| Field | Type | Required |\n|---|---|---|\n| id | string | yes |\n";
-        let (contracts, warnings) = produced_contracts(page);
+        let (contracts, warnings) = produced_contracts(page, None);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(contracts.len(), 2);
         assert_eq!(contracts[0].name, "GET /records");

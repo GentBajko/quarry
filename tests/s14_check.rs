@@ -603,3 +603,154 @@ fn s14_a_clean_update_carries_no_contract_notes() {
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     assert!(!stdout(&out).contains("contract check"), "{}", stdout(&out));
 }
+
+/// One `### <Entity>` section for the models chapter.
+type Model<'a> = (&'a str, &'a [(&'a str, &'a str, &'a str)]);
+
+/// Rewrites the producer's working-tree chapter to name a model, with the
+/// models chapter beside it when `models` is given.
+fn set_producer_model(
+    it: &Contracts,
+    schema: &str,
+    inline: &[(&str, &str, &str)],
+    models: Option<Model<'_>>,
+) {
+    it.w.write_docs_in(
+        &it.producer,
+        &[(
+            "09-interfaces.md",
+            &producer_page_with_schema(
+                "2026-09-03",
+                "report-builder",
+                "http",
+                "GET /records",
+                schema,
+                inline,
+            ),
+        )],
+    );
+    if let Some((entity, fields)) = models {
+        it.w.write_docs_in(
+            &it.producer,
+            &[("02-models.md", &models_page("2026-09-03", entity, fields))],
+        );
+    }
+}
+
+#[test]
+fn s14_a_model_reference_resolves_against_the_models_chapter() {
+    let it = contract_world();
+    set_producer_model(
+        &it,
+        "FileRecord",
+        &[],
+        Some(("FileRecord", &RECORD_FIELDS[..2])),
+    );
+    let out = it.w.run_in(&it.producer, &["check"]);
+    assert_eq!(code(&out), 1, "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "record-store produces http GET /records (fields from 02-models.md § FileRecord)\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("  break: content_type no longer produced\n"),
+        "{text}"
+    );
+}
+
+#[test]
+fn s14_a_list_suffix_names_the_same_model() {
+    let it = contract_world();
+    set_producer_model(
+        &it,
+        "FileRecord[]",
+        &[],
+        Some(("FileRecord", RECORD_FIELDS)),
+    );
+    let out = it.w.run_in(&it.producer, &["--json", "check"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let value = json(&out);
+    assert_eq!(
+        value["result"]["breaks"].as_array().expect("breaks").len(),
+        0
+    );
+    assert_eq!(value["result"]["contracts"][0]["model"], "FileRecord");
+}
+
+#[test]
+fn s14_a_model_the_chapter_lacks_is_a_warning_not_a_break() {
+    let it = contract_world();
+    set_producer_model(&it, "FileRecord", &[], None);
+    let out = it.w.run_in(&it.producer, &["check"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "warning: 09-interfaces.md: model FileRecord not in 02-models.md; nothing to compare\n"
+        ),
+        "{text}"
+    );
+    assert!(text.ends_with("no breaks\n"), "{text}");
+
+    set_producer_model(&it, "FileRecord", &[], Some(("OtherThing", RECORD_FIELDS)));
+    let again = it.w.run_in(&it.producer, &["check"]);
+    assert_eq!(code(&again), 0, "{}", stderr(&again));
+    assert!(
+        stdout(&again).contains("warning: 09-interfaces.md: model FileRecord not in 02-models.md"),
+        "{}",
+        stdout(&again)
+    );
+}
+
+#[test]
+fn s14_a_section_that_lists_fields_and_names_a_model_keeps_the_table() {
+    let it = contract_world();
+    set_producer_model(
+        &it,
+        "FileRecord",
+        RECORD_FIELDS,
+        Some(("FileRecord", &RECORD_FIELDS[..1])),
+    );
+    let out = it.w.run_in(&it.producer, &["check"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "warning: 09-interfaces.md: http GET /records lists fields and names model FileRecord; the table wins\n"
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("fields from 02-models.md"), "{text}");
+    assert!(text.ends_with("no breaks\n"), "{text}");
+}
+
+#[test]
+fn s14_a_model_line_in_the_payload_section_resolves_too() {
+    let it = contract_world();
+    it.w.write_docs_in(
+        &it.producer,
+        &[
+            (
+                "09-interfaces.md",
+                &format!(
+                    "{}\n### GET /records\n\nModel: `FileRecord`\n",
+                    producer_page("2026-09-03", "report-builder", "http", "GET /records", &[],)
+                ),
+            ),
+            (
+                "02-models.md",
+                &models_page("2026-09-03", "FileRecord", &RECORD_FIELDS[..2]),
+            ),
+        ],
+    );
+    let out = it.w.run_in(&it.producer, &["check"]);
+    assert_eq!(code(&out), 1, "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("(fields from 02-models.md § FileRecord)"),
+        "{}",
+        stdout(&out)
+    );
+}

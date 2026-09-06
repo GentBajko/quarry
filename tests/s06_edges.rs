@@ -76,15 +76,40 @@ fn s6_an_entry_missing_a_required_field_is_a_warning_not_a_failure() {
         ("00-index.md", &index_page("2026-09-04")),
         (
             "09-interfaces.md",
-            "---\ngenerated_date: 2026-09-04\nproduces:\n  - kind: sqs\n    name: orphan\n---\n\n## Produces\n",
+            "---\ngenerated_date: 2026-09-04\nproduces:\n  - name: orphan\n    to: nowhere\n---\n\n## Produces\n",
         ),
     ]);
     w.commit_push("docs");
     assert!(w.run(&["add"]).status.success());
     let out = w.run(&["docs", "index", "--force"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
-    assert!(stdout(&out).contains("missing 'to'"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("missing 'kind'"), "{}", stdout(&out));
     assert!(stdout(&out).contains("0 edges"), "{}", stdout(&out));
+}
+
+#[test]
+fn s6_a_produces_row_with_no_to_is_a_publication_not_a_warning() {
+    let w = world();
+    assert!(w.run(&["init", "--url", &w.docs_url]).status.success());
+    w.write_docs(&[
+        ("00-index.md", &index_page("2026-09-04")),
+        (
+            "09-interfaces.md",
+            "---\ngenerated_date: 2026-09-04\nedges:\n  produces:\n    - kind: sqs\n      name: orphan\n---\n\n## Produces\n",
+        ),
+    ]);
+    w.commit_push("docs");
+    assert!(w.run(&["add"]).status.success());
+    let out = w.run(&["docs", "index", "--force"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(!stdout(&out).contains("warning"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("0 edges"), "{}", stdout(&out));
+    let show = w.run(&["docs", "show", "ingest-api"]);
+    assert!(
+        stdout(&show).contains("produces: sqs orphan -> (unknown)"),
+        "{}",
+        stdout(&show)
+    );
 }
 
 #[test]
@@ -140,6 +165,37 @@ fn s6_a_page_with_only_tables_declares_the_same_edges() {
 
     let deps = w.run(&["docs", "deps", "ingest-api", "--downstream"]);
     assert!(stdout(&deps).contains("record-store"), "{}", stdout(&deps));
+}
+
+#[test]
+fn s6_the_edges_block_wins_over_the_table_below_it() {
+    let w = world();
+    assert!(w.run(&["init", "--url", &w.docs_url]).status.success());
+    w.write_docs(&[
+        ("00-index.md", &index_page("2026-09-04")),
+        (
+            "09-interfaces.md",
+            "---\ngenerated_date: 2026-09-04\nedges:\n  produces:\n    - kind: SQS\n      name: file-ingest\n      to: [record-store, archive]\n  consumes:\n    - kind: http\n      name: \"GET /customers/{id}\"\n      from: identity-api\n---\n\n## Produces\n\n| Kind | Name | To |\n|---|---|---|\n| kafka | stale-row | somewhere |\n",
+        ),
+    ]);
+    w.commit_push("docs");
+    assert!(w.run(&["add"]).status.success());
+
+    let show = w.run(&["docs", "show", "ingest-api"]);
+    let text = stdout(&show);
+    assert!(
+        text.contains("produces: sqs file-ingest -> archive"),
+        "{text}"
+    );
+    assert!(
+        text.contains("produces: sqs file-ingest -> record-store"),
+        "{text}"
+    );
+    assert!(
+        text.contains("consumes: http GET /customers/{id} <- identity-api"),
+        "{text}"
+    );
+    assert!(!text.contains("stale-row"), "{text}");
 }
 
 #[test]

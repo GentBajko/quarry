@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::io::IsTerminal;
 use std::io::Write;
+use std::path::Path;
 
 use crate::check;
 use crate::config;
@@ -496,7 +497,17 @@ pub(crate) fn check(ctx: &Context, sync: bool) -> Result<Response> {
             ));
             continue;
         }
-        let mut out = check::run(&opened, &unit.name, text.as_deref(), &clone)?;
+        let models = read_page(
+            &ctx.repo_root.join(&unit.docs_dir),
+            frontmatter::MODELS_PAGE,
+        )?;
+        let mut out = check::run(
+            &opened,
+            &unit.name,
+            text.as_deref(),
+            models.as_deref(),
+            &clone,
+        )?;
         // An unregistered repo already carries check::run's own note; a second
         // one about the missing chapter would add nothing. The edge filter is
         // the same three terms check::run applies when it groups consumers.
@@ -545,6 +556,15 @@ pub(crate) fn check(ctx: &Context, sync: bool) -> Result<Response> {
     })
 }
 
+// A chapter a repo need not have.
+fn read_page(dir: &Path, page: &str) -> Result<Option<String>> {
+    match std::fs::read_to_string(dir.join(page)) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(QuarryError::from(e)),
+    }
+}
+
 // The imported folder is in the clone by now, so this compares the pages that
 // were just written. Advisory: breaks become notes and the exit code is
 // unchanged.
@@ -556,7 +576,8 @@ fn contract_notes(ctx: &Context, index: &index::Index, repo: &str) -> Result<Vec
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(QuarryError::from(e)),
     };
-    let out = check::run(index, repo, Some(&text), &clone)?;
+    let models = read_page(&clone.join(repo), frontmatter::MODELS_PAGE)?;
+    let out = check::run(index, repo, Some(&text), models.as_deref(), &clone)?;
     let mut notes: Vec<String> = out
         .breaks
         .iter()
@@ -768,6 +789,7 @@ pub(crate) fn docs_index(ctx: &Context, force: bool) -> Result<Response> {
     if !report.rebuilt {
         report.repos = opened.repos()?.len() as u32;
         report.observed = opened.observed.clone();
+        report.ambiguous = opened.ambiguous()?;
     }
     Ok(Response {
         meta: meta_of(&opened),

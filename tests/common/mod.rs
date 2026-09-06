@@ -357,6 +357,23 @@ pub fn aliased_consumes_page(
     )
 }
 
+/// An interfaces page whose `edges:` block names no far end, leaving every row
+/// to the name join. Rows are (kind, name).
+pub fn open_edges_page(date: &str, produces: &[(&str, &str)], consumes: &[(&str, &str)]) -> String {
+    let mut text = format!("---\ngenerated_date: {date}\nedges:\n");
+    for (key, rows) in [("produces", produces), ("consumes", consumes)] {
+        if rows.is_empty() {
+            continue;
+        }
+        text.push_str(&format!("  {key}:\n"));
+        for (kind, name) in rows {
+            text.push_str(&format!("    - kind: {kind}\n      name: \"{name}\"\n"));
+        }
+    }
+    text.push_str("---\n\n# Interfaces\n\nWhat this repo speaks.\n");
+    text
+}
+
 /// A page whose frontmatter lists the names this repo answers to and declares
 /// no edges.
 pub fn known_as_page(date: &str, aliases: &[&str]) -> String {
@@ -410,6 +427,33 @@ pub fn producer_page(
 ) -> String {
     let mut text = format!(
         "---\ngenerated_date: {date}\n---\n\n## Produces\n\n| Kind | Name | To |\n|---|---|---|\n| {kind} | {name} | [{to}](../{to}/09-interfaces.md) |\n"
+    );
+    if !fields.is_empty() {
+        text.push_str(&format!("\n### {name}\n\n{}", payload_table(fields)));
+    }
+    text
+}
+
+/// A models chapter with one `### <Entity>` section.
+pub fn models_page(date: &str, entity: &str, fields: &[(&str, &str, &str)]) -> String {
+    format!(
+        "---\ngenerated_date: {date}\n---\n\n# Models\n\n## Fields and types\n\n### {entity}\n\n{}",
+        payload_table(fields)
+    )
+}
+
+/// A producer page whose row names a model rather than listing fields. A
+/// non-empty `fields` adds the payload table the model then loses to.
+pub fn producer_page_with_schema(
+    date: &str,
+    to: &str,
+    kind: &str,
+    name: &str,
+    schema: &str,
+    fields: &[(&str, &str, &str)],
+) -> String {
+    let mut text = format!(
+        "---\ngenerated_date: {date}\nedges:\n  produces:\n    - kind: {kind}\n      name: \"{name}\"\n      to: {to}\n      schema: {schema}\n---\n\n## Produces\n\n| Kind | Name | To | Schema |\n|---|---|---|---|\n| {kind} | {name} | {to} | `{schema}` |\n"
     );
     if !fields.is_empty() {
         text.push_str(&format!("\n### {name}\n\n{}", payload_table(fields)));

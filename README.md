@@ -245,7 +245,7 @@ Edges come from each repo's own `09-interfaces.md`, written as tables:
 
 | Kind | Name | To | Site |
 |---|---|---|---|
-| sqs | file-ingest | [record-store](../record-store/09-interfaces.md) | `src/publish.rs:57` |
+| sqs | file-ingest | [record-store](../record-store/09-interfaces.md) | `src/publish.rs` |
 
 ## Consumes
 
@@ -255,35 +255,52 @@ Edges come from each repo's own `09-interfaces.md`, written as tables:
 ```
 
 Columns are matched by name, not position, so a renamed column is a
-warning rather than a silent zero. Backticks and link syntax are stripped
-from cells, which means the relative link that gives you a graph in any
-markdown viewer is the same cell the repo name comes from. Tables are read
-only on that page and never inside a fenced block, so a document
-describing this format declares nothing.
+warning rather than a silent zero; a `To` column that exists with an empty
+cell is a row for the name join, not a mistake. Backticks and link syntax
+are stripped from cells, so the relative link that gives you a graph in
+any markdown viewer is the same cell the repo name comes from. Tables
+are read only on that page and never inside a fenced block, so a
+document describing this format declares nothing.
 
-Frontmatter does the same job on any page, for generators that would
-rather emit data than markdown, and wins when a page carries both:
+Frontmatter says the same thing as data, and wins when a page carries
+both. The `edges:` block on `09-interfaces.md` is the canonical form:
 
 ```yaml
-produces:
-  - kind: sqs
-    name: file-ingest
-    to: record-store
-    site: src/publish.rs:57
+edges:
+  produces:
+    - { kind: sqs,  name: file-ingest,      site: src/publish.rs, schema: FileIngestMessage }
+  consumes:
+    - { kind: http, name: "GET /users/{id}", site: src/auth.rs,   schema: UserRef, from: identity-api }
 ```
 
-`kind` is free-form and lowercased; `name` and `to`/`from` are required.
-Either side may declare an edge, and when both do quarry reports
-`declared_by: both`. A disagreement between the two stays visible instead
-of being merged away. An edge pointing at a repo that is not in the docs
-repo is kept and marked `(not in quarry)`, so a broken link is something
-you can see. Repos declaring no edges at all are still fully searchable.
+`kind` is free-form and lowercased; `name` is required and kept verbatim.
+`to` takes one repo name or a list of them, and quarry writes one edge per
+entry. Three forms are read, in this order: the `edges:` block, then
+top-level `produces:`/`consumes:` keys, then the tables. Pages written
+against the older shapes keep working unchanged.
 
-`site` is optional and checked at import. The path part of every `Site`,
-everything before a trailing `:line` or `:from-to`, is tested against the
-imported commit's tracked files. A miss does not stop the import: the page
-lands, the output carries a note such as
-`site src/gone.rs:12 for http GET /records is not in the tree at 4f1c9a2`,
+`to` and `from` are optional. A row that names neither is a row quarry
+resolves itself, described under [The name join](#the-name-join).
+`to: unknown` records a decision, so quarry never joins it and Capstone
+never asks about it again. Either side may declare an edge, and
+when both do quarry reports `declared_by: both`. A disagreement between the
+two stays visible instead of being merged away. An edge pointing at a repo
+that is not in the docs repo is kept and marked `(not in quarry)`, so a
+broken link is something you can see. Repos declaring no edges at all are
+still fully searchable.
+
+`schema` names a `### <Entity>` section of the same repo's `02-models.md`
+and `quarry check` reads the fields from there (see
+[Contract check](#contract-check)). A row without it carries its fields in
+its own `### <Name>` section.
+
+`site` is a repo-relative path. The chapter is normative and a line number
+drifts on every edit, so write the path alone; quarry strips a trailing
+`:line` or `:from-to` from what it reads, and pages written with one keep
+working. The path is tested against the imported commit's tracked files. A
+miss does not stop the import: the page lands, the output carries a note
+such as
+`site src/gone.rs for http GET /records is not in the tree at 4f1c9a2`,
 the folder's stamp records the edge under `unverified`, and `deps` marks
 it `(site unverified)` from either end until a later import verifies it.
 `add --strict` and `update --strict` refuse instead, listing every
@@ -317,6 +334,46 @@ by-name row rather than expanding it, and the closing `<N> repos` line
 counts only repos reached over a real edge. Five rows naming four repos
 can therefore end on `3 repos, depth 1`, one name having arrived by
 name alone.
+
+### The name join
+
+No repository holds another repository's name. A publisher knows a topic,
+a route knows a path, a client knows a base URL. So a page is allowed to
+leave `to` and `from` out, and quarry pairs the two ends itself at index
+time by matching `(kind, name)` across repos:
+
+```text
+$ quarry docs deps record-store --downstream
+record-store
+  http GET /records -> report-builder (resolved by name)
+1 repos, depth 1
+```
+
+Routed kinds (`http`, `ws`, `wss`, `grpc`) join on a normalised route: the
+method is lowercased and every path parameter becomes `{}`, so
+`GET /users/{id}`, `get /users/:id` and `GET /users/<id>` are one key.
+Every other kind joins on the name as written.
+
+The join runs over the consumes rows: each one looks for repos publishing
+its key. Exactly one producer makes the edge, stored with
+`declared_by: joined` and `resolved_by: "name"` and marked
+`(resolved by name)` by `deps` and `show`. A producer's edges are the ones
+its consumers claim, so one API read by four repos is four edges and needs
+nothing from the producer's page.
+
+Two repos publishing the key one consumer reads is a real question: the
+consumer calls one of them and nothing on the page says which. That row
+joins nothing, and `quarry docs index` reports it against the consumer and
+leaves the decision to a person:
+
+```text
+unresolved: http GET /users/{id} consumed by ingest-api: 2 producers, identity-api, admin-api
+```
+
+`--json` carries the same rows under `result.ambiguous`. A produces row
+that reached no consumer stays a publication, exactly as `to: unknown`
+does. A `to` or `from` a person wrote is never overwritten, and the join
+never touches it.
 
 ### Observed edges
 
@@ -396,6 +453,24 @@ fields this repo actually reads:
 | content_type | enum | yes |
 ```
 
+A row that names a `schema` instead points at `02-models.md`:
+
+```markdown
+## Produces
+
+| Kind | Name | To | Schema |
+|---|---|---|---|
+| sqs | file-ingest | | `FileIngestMessage` |
+```
+
+`quarry check` then reads the `### FileIngestMessage` section of this
+repo's `02-models.md` and compares against its table, naming the source on
+the contract line as `(fields from 02-models.md § FileIngestMessage)` and
+in `--json` as `model`. `FileIngestMessage[]` names the same section. A
+chapter or section that is not there is a warning, never a break. A
+section that lists fields and names a model keeps its table, with a
+warning that says so.
+
 `quarry check` reads the working tree's chapter, finds every consumer the
 quarry knows for each produced contract, and compares the two tables field
 by field:
@@ -452,7 +527,7 @@ notes without changing its exit code.
 | `quarry docs show <repo>` | Stamps, aliases, both edge directions, publications with unknown consumers, and the repo's overview section. Edge lines carry the same observed marks as `deps` |
 | `quarry docs section <repo> "<heading>"` | One section by heading. Exact match first, then prefix; an ambiguous heading lists the candidates and exits 1 |
 | `quarry docs search "<term>" [--repo] [--limit]` | Full-text hits by repo, file and heading |
-| `quarry docs deps <repo> --downstream\|--upstream [--depth N]` | The edge walk. `--depth 0` is unlimited; cycles are marked once and not expanded. Publications add possible consumers `(by name only)`, which the walk never follows and the closing `<N> repos` total never counts, so that total can be lower than the number of repo names on screen; with `observed-edges.json` present, edges are marked `(observed, undeclared)` or `(declared, never observed)` |
+| `quarry docs deps <repo> --downstream\|--upstream [--depth N]` | The edge walk. `--depth 0` is unlimited; cycles are marked once and not expanded. An edge the name join made is marked `(resolved by name)`. Publications add possible consumers `(by name only)`, which the walk never follows and the closing `<N> repos` total never counts, so that total can be lower than the number of repo names on screen; with `observed-edges.json` present, edges are marked `(observed, undeclared)` or `(declared, never observed)` |
 | `quarry docs path <a> <b>` | The shortest chain of edges, falling back to the reverse direction |
 | `quarry docs index [--force]` | Rebuild the local index without touching the network, listing every edge target that resolved to nothing and, when `observed-edges.json` is there, the `observed edges:` count and its generation date |
 
@@ -555,7 +630,7 @@ docs-quarry/
   00-index.md
   observed-edges.json  optional, written by your traffic exporter (see Observed edges)
   ingest-api/
-    .quarry-stamp        the imported commit, origin, docs folder, and any edges whose site was not in the tree
+    .quarry-stamp        the imported commit, origin, docs folder, and any edges whose site path was not in the tree
     00-index.md, 01-architecture.md, …, 09-interfaces.md, logic/
   record-store/
   …

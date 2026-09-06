@@ -19,11 +19,13 @@ pub(crate) struct Section {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EdgeDecl {
-    pub(crate) other: String,
+    // Absent means the page left the far end to the name join.
+    pub(crate) other: Option<String>,
     pub(crate) kind: String,
     pub(crate) name: String,
     pub(crate) produces: bool,
     pub(crate) site: Option<String>,
+    pub(crate) schema: Option<String>,
 }
 
 pub(crate) fn split(text: &str) -> (Option<&str>, &str) {
@@ -77,6 +79,8 @@ pub(crate) fn parse(text: &str) -> Parsed {
 
 pub(crate) const INTERFACES_PAGE: &str = "09-interfaces.md";
 
+pub(crate) const MODELS_PAGE: &str = "02-models.md";
+
 pub(crate) const UNKNOWN_TARGET: &str = "unknown";
 
 pub(crate) fn is_unknown_target(other: &str) -> bool {
@@ -111,21 +115,37 @@ pub(crate) fn known_as_of(fields: &Map<String, Value>) -> (Vec<String>, Vec<Stri
     (names, warnings)
 }
 
+/// The three declaration forms, in precedence order: the `edges:` block, the
+/// top-level `produces`/`consumes` keys, then the interfaces page's tables.
 pub(crate) fn edges_of(
     path: &str,
     fields: &Map<String, Value>,
     body: &str,
 ) -> (Vec<EdgeDecl>, Vec<String>) {
-    if fields.contains_key("produces") || fields.contains_key("consumes") {
-        return edges_from_frontmatter(fields);
+    let mut warnings = Vec::new();
+    match fields.get("edges") {
+        Some(Value::Object(block)) => {
+            let (edges, block_warnings) = edges_from_map(block, "edges.");
+            warnings.extend(block_warnings);
+            return (edges, warnings);
+        }
+        // A wrapper that is not a mapping falls through to the older forms
+        // rather than hiding rows the same page still carries.
+        Some(_) => warnings.push("edges is not a mapping".to_string()),
+        None => {}
     }
-    if path.rsplit('/').next() == Some(INTERFACES_PAGE) {
-        return edges_from_tables(body);
-    }
-    (Vec::new(), Vec::new())
+    let (edges, more) = if fields.contains_key("produces") || fields.contains_key("consumes") {
+        edges_from_map(fields, "")
+    } else if path.rsplit('/').next() == Some(INTERFACES_PAGE) {
+        edges_from_tables(body)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    warnings.extend(more);
+    (edges, warnings)
 }
 
-fn edges_from_frontmatter(fields: &Map<String, Value>) -> (Vec<EdgeDecl>, Vec<String>) {
+fn edges_from_map(fields: &Map<String, Value>, prefix: &str) -> (Vec<EdgeDecl>, Vec<String>) {
     let mut edges = Vec::new();
     let mut warnings = Vec::new();
     for (key, produces) in [("produces", true), ("consumes", false)] {
@@ -133,20 +153,20 @@ fn edges_from_frontmatter(fields: &Map<String, Value>) -> (Vec<EdgeDecl>, Vec<St
             continue;
         };
         let Some(items) = value.as_array() else {
-            warnings.push(format!("{key} is not a list"));
+            warnings.push(format!("{prefix}{key} is not a list"));
             continue;
         };
         for (i, item) in items.iter().enumerate() {
-            match edge_entry(item, key, produces) {
-                Ok(edge) => edges.push(edge),
-                Err(reason) => warnings.push(format!("{key}[{i}] {reason}")),
+            match edge_entries(item, produces) {
+                Ok(rows) => edges.extend(rows),
+                Err(reason) => warnings.push(format!("{prefix}{key}[{i}] {reason}")),
             }
         }
     }
     (edges, warnings)
 }
 
-fn edge_entry(item: &Value, key: &str, produces: bool) -> std::result::Result<EdgeDecl, String> {
+fn edge_entries(item: &Value, produces: bool) -> std::result::Result<Vec<EdgeDecl>, String> {
     let Some(map) = item.as_object() else {
         return Err("is not a mapping".to_string());
     };
@@ -155,15 +175,77 @@ fn edge_entry(item: &Value, key: &str, produces: bool) -> std::result::Result<Ed
     let name = string_field(map, "name")
         .or_else(|| string_field(map, "endpoint"))
         .ok_or_else(|| "missing 'name'".to_string())?;
-    let other =
-        string_field(map, other_key).ok_or_else(|| format!("missing '{other_key}' in {key}"))?;
-    Ok(EdgeDecl {
-        other,
+    let row = EdgeDecl {
+        other: None,
         kind: kind.to_ascii_lowercase(),
         name,
         produces,
         site: string_field(map, "site"),
-    })
+        schema: string_field(map, "schema"),
+    };
+    let others = other_values(map, other_key)?;
+    if others.is_empty() {
+        return Ok(vec![row]);
+    }
+    Ok(others
+        .into_iter()
+        .map(|other| EdgeDecl {
+            other: Some(other),
+            ..row.clone()
+        })
+        .collect())
+}
+
+/// One far end, several, or none at all.
+fn other_values(map: &Map<String, Value>, key: &str) -> std::result::Result<Vec<String>, String> {
+    let Some(Value::Array(items)) = map.get(key) else {
+        return Ok(string_field(map, key).into_iter().collect());
+    };
+    let mut out: Vec<String> = Vec::new();
+    for item in items {
+        match item {
+            Value::String(s) if !s.trim().is_empty() => {
+                let s = s.trim().to_string();
+                if !out.contains(&s) {
+                    out.push(s);
+                }
+            }
+            _ => return Err(format!("has a non-string in '{key}'")),
+        }
+    }
+    Ok(out)
+}
+
+/// The join key for a routed contract. The method's case and a path
+/// parameter's spelling belong to whoever wrote the row, not to the contract.
+pub(crate) fn normalize_route(name: &str) -> String {
+    let mut out = String::new();
+    for (i, part) in name.split_whitespace().enumerate() {
+        if i > 0 {
+            out.push(' ');
+        }
+        let part = normalize_path(part);
+        if i == 0 {
+            out.push_str(&part.to_lowercase());
+        } else {
+            out.push_str(&part);
+        }
+    }
+    out
+}
+
+fn normalize_path(part: &str) -> String {
+    part.split('/')
+        .map(|segment| if is_parameter(segment) { "{}" } else { segment })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn is_parameter(segment: &str) -> bool {
+    let bounded = |open: char, close: char| {
+        segment.len() >= 2 && segment.starts_with(open) && segment.ends_with(close)
+    };
+    (segment.starts_with(':') && segment.len() > 1) || bounded('{', '}') || bounded('<', '>')
 }
 
 fn edges_from_tables(body: &str) -> (Vec<EdgeDecl>, Vec<String>) {
@@ -281,8 +363,9 @@ fn table_entry(
     other_key: &str,
     produces: bool,
 ) -> std::result::Result<EdgeDecl, String> {
+    let column = |name: &str| headers.iter().position(|h| h == name);
     let cell = |name: &str| -> Option<String> {
-        let index = headers.iter().position(|h| h == name)?;
+        let index = column(name)?;
         cells
             .get(index)
             .map(|c| c.trim().to_string())
@@ -292,15 +375,18 @@ fn table_entry(
     let name = cell("name")
         .or_else(|| cell("endpoint"))
         .ok_or_else(|| "has no 'name'".to_string())?;
-    let other = cell(other_key)
-        .or_else(|| cell("repo"))
-        .ok_or_else(|| format!("has no '{other_key}'"))?;
+    // A missing column is a renamed header, which stays a warning; an empty
+    // cell under a column that exists is a row the name join has to place.
+    if column(other_key).is_none() && column("repo").is_none() {
+        return Err(format!("has no '{other_key}'"));
+    }
     Ok(EdgeDecl {
-        other,
+        other: cell(other_key).or_else(|| cell("repo")),
         kind: kind.to_ascii_lowercase(),
         name,
         produces,
         site: cell("site"),
+        schema: cell("schema"),
     })
 }
 
@@ -434,7 +520,7 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(edges.len(), 2);
         assert_eq!(edges[0].kind, "sqs");
-        assert_eq!(edges[0].other, "record-store");
+        assert_eq!(edges[0].other.as_deref(), Some("record-store"));
         assert!(edges[0].produces);
         assert_eq!(edges[1].name, "GET /customers/{id}");
         assert!(!edges[1].produces);
@@ -442,11 +528,84 @@ mod tests {
 
     #[test]
     fn s6_entry_missing_a_required_field_is_skipped_with_a_warning() {
-        let parsed = parse("---\nproduces:\n  - kind: sqs\n    name: x\n---\nbody\n");
+        let parsed = parse("---\nproduces:\n  - name: x\n    to: y\n---\nbody\n");
         let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
         assert!(edges.is_empty());
         assert_eq!(warnings.len(), 1);
-        assert!(warnings[0].contains("missing 'to'"), "{warnings:?}");
+        assert!(warnings[0].contains("missing 'kind'"), "{warnings:?}");
+    }
+
+    #[test]
+    fn s6_an_entry_without_a_far_end_is_a_row_for_the_join() {
+        let parsed = parse("---\nproduces:\n  - kind: sqs\n    name: x\n---\nbody\n");
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].other, None);
+        assert_eq!(edges[0].name, "x");
+    }
+
+    #[test]
+    fn s6_the_edges_block_wins_over_the_top_level_keys() {
+        let page = "---\nedges:\n  produces:\n    - { kind: sqs, name: wrapped, to: warehouse }\nproduces:\n  - kind: kafka\n    name: top-level\n    to: elsewhere\n---\nbody\n";
+        let parsed = parse(page);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].name, "wrapped");
+        assert_eq!(edges[0].other.as_deref(), Some("warehouse"));
+    }
+
+    #[test]
+    fn s6_a_wrapper_that_is_not_a_mapping_warns_and_falls_through() {
+        let page = "---\nedges: []\nproduces:\n  - kind: kafka\n    name: top-level\n    to: elsewhere\n---\nbody\n";
+        let parsed = parse(page);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert_eq!(warnings, ["edges is not a mapping"]);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].name, "top-level");
+    }
+
+    #[test]
+    fn s6_a_list_of_targets_is_one_row_each() {
+        let page = "---\nedges:\n  produces:\n    - kind: sqs\n      name: file-ingest\n      to: [record-store, archive, record-store]\n---\nbody\n";
+        let parsed = parse(page);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let targets: Vec<Option<&str>> = edges.iter().map(|e| e.other.as_deref()).collect();
+        assert_eq!(targets, [Some("record-store"), Some("archive")]);
+        assert!(edges.iter().all(|e| e.name == "file-ingest" && e.produces));
+    }
+
+    #[test]
+    fn s6_a_row_carries_its_schema_from_either_form() {
+        let block = parse(
+            "---\nedges:\n  produces:\n    - { kind: sqs, name: file-ingest, schema: FileIngestMessage }\n---\nbody\n",
+        );
+        let (edges, warnings) = edges_of("09-interfaces.md", &block.fields, &block.body);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(edges[0].schema.as_deref(), Some("FileIngestMessage"));
+        let table = parse(
+            "---\ngenerated_date: 2026-09-04\n---\n\n## Produces\n\n| Kind | Name | To | Schema |\n|---|---|---|---|\n| sqs | file-ingest |  | `FileIngestMessage[]` |\n",
+        );
+        let (edges, warnings) = edges_of("09-interfaces.md", &table.fields, &table.body);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(edges[0].other, None);
+        assert_eq!(edges[0].schema.as_deref(), Some("FileIngestMessage[]"));
+    }
+
+    #[test]
+    fn s6_normalize_route_folds_the_method_and_the_parameters() {
+        assert_eq!(normalize_route("GET /users/{id}"), "get /users/{}");
+        assert_eq!(normalize_route("get  /users/:id"), "get /users/{}");
+        assert_eq!(normalize_route("GET /users/<id>"), "get /users/{}");
+        assert_eq!(
+            normalize_route("POST /orders/{order_id}/lines/:line"),
+            "post /orders/{}/lines/{}"
+        );
+        assert_eq!(normalize_route("Lookup"), "lookup");
+        assert_eq!(normalize_route("/users/{id}"), "/users/{}");
+        assert_eq!(normalize_route(""), "");
     }
 
     #[test]
@@ -465,10 +624,10 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(edges.len(), 2);
         assert_eq!(edges[0].kind, "sqs");
-        assert_eq!(edges[0].other, "record-store");
+        assert_eq!(edges[0].other.as_deref(), Some("record-store"));
         assert_eq!(edges[0].name, "file-ingest");
         assert!(edges[0].produces);
-        assert_eq!(edges[1].other, "identity-api");
+        assert_eq!(edges[1].other.as_deref(), Some("identity-api"));
         assert_eq!(edges[1].name, "GET /customers/{id}");
         assert!(!edges[1].produces);
     }
