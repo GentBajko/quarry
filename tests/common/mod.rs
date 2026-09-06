@@ -442,8 +442,9 @@ pub fn models_page(date: &str, entity: &str, fields: &[(&str, &str, &str)]) -> S
     )
 }
 
-/// A producer page whose row names a model rather than listing fields. A
-/// non-empty `fields` adds the payload table the model then loses to.
+/// A producer page whose row names a model rather than listing fields. An
+/// empty `to` leaves the far end to the name join; a non-empty `fields` adds
+/// the payload table the model then loses to.
 pub fn producer_page_with_schema(
     date: &str,
     to: &str,
@@ -453,7 +454,31 @@ pub fn producer_page_with_schema(
     fields: &[(&str, &str, &str)],
 ) -> String {
     let mut text = format!(
-        "---\ngenerated_date: {date}\nedges:\n  produces:\n    - kind: {kind}\n      name: \"{name}\"\n      to: {to}\n      schema: {schema}\n---\n\n## Produces\n\n| Kind | Name | To | Schema |\n|---|---|---|---|\n| {kind} | {name} | {to} | `{schema}` |\n"
+        "---\ngenerated_date: {date}\nedges:\n  produces:\n    - kind: {kind}\n      name: \"{name}\"\n"
+    );
+    if !to.is_empty() {
+        text.push_str(&format!("      to: {to}\n"));
+    }
+    text.push_str(&format!(
+        "      schema: {schema}\n---\n\n## Produces\n\n| Kind | Name | To | Schema |\n|---|---|---|---|\n| {kind} | {name} | {to} | `{schema}` |\n"
+    ));
+    if !fields.is_empty() {
+        text.push_str(&format!("\n### {name}\n\n{}", payload_table(fields)));
+    }
+    text
+}
+
+/// A consumes page whose row names a model and leaves `from` to the name join.
+/// A non-empty `fields` adds the inline table the model then loses to.
+pub fn consumer_page_with_schema(
+    date: &str,
+    kind: &str,
+    name: &str,
+    schema: &str,
+    fields: &[(&str, &str, &str)],
+) -> String {
+    let mut text = format!(
+        "---\ngenerated_date: {date}\nedges:\n  consumes:\n    - kind: {kind}\n      name: \"{name}\"\n      schema: {schema}\n---\n\n## Consumes\n\n| Kind | Name | From | Schema |\n|---|---|---|---|\n| {kind} | {name} |  | `{schema}` |\n"
     );
     if !fields.is_empty() {
         text.push_str(&format!("\n### {name}\n\n{}", payload_table(fields)));

@@ -471,6 +471,14 @@ chapter or section that is not there is a warning, never a break. A
 section that lists fields and names a model keeps its table, with a
 warning that says so.
 
+A consumes row's `schema` is read the same way, from that repo's own
+`02-models.md`: the DTO a client deserialises into is the set of fields it
+reads, so a producer dropping one of them is a break like any other. The
+two ends name their own types, and neither has to know the other's. A
+consumer model that resolves to nothing keeps the `lists no fields` note
+and breaks nothing, and a consumer that also writes an inline table keeps
+that table.
+
 `quarry check` reads the working tree's chapter, finds every consumer the
 quarry knows for each produced contract, and compares the two tables field
 by field:

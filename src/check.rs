@@ -6,6 +6,8 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use serde_json::{Map, Value};
+
 use crate::errors::Result;
 use crate::frontmatter::{self, INTERFACES_PAGE, MODELS_PAGE, Section, Table};
 use crate::index::{Edge, Index};
@@ -37,6 +39,7 @@ pub(crate) enum ConsumerSection {
 pub(crate) struct ConsumerPage {
     pub(crate) generated_date: Option<String>,
     pub(crate) section: ConsumerSection,
+    pub(crate) warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -261,25 +264,65 @@ pub(crate) fn produced_contracts(
     (contracts, warnings)
 }
 
-/// What one consumer's chapter records for a contract.
-pub(crate) fn consumer_page(text: &str, name: &str) -> ConsumerPage {
+/// Two spellings of one contract. A consumer writes the route its client
+/// calls, which is the producer's route with its own parameter names.
+fn same_contract(a: &str, b: &str) -> bool {
+    let fold = |text: &str| {
+        frontmatter::normalize_route(&frontmatter::normalize_heading(text.trim_matches('`')))
+    };
+    fold(a) == fold(b)
+}
+
+/// The model a consumes row names for one contract.
+fn consumed_schema(fields: &Map<String, Value>, body: &str, name: &str) -> Option<String> {
+    let (edges, _) = frontmatter::edges_of(INTERFACES_PAGE, fields, body);
+    edges
+        .into_iter()
+        .find(|edge| !edge.produces && same_contract(&edge.name, name))
+        .and_then(|edge| edge.schema)
+}
+
+/// What one consumer's chapter records for a contract: its own table, or the
+/// model it names read from its own `02-models.md`.
+pub(crate) fn consumer_page(text: &str, name: &str, models: Option<&str>) -> ConsumerPage {
     let parsed = frontmatter::parse(text);
     let generated_date = parsed
         .fields
         .get("generated_date")
         .and_then(|v| v.as_str())
         .map(str::to_string);
+    let mut warnings: Vec<String> = Vec::new();
     let sections = contract_sections(&parsed.body, "consumes");
-    let section = match find_contract(&sections, name) {
-        None => ConsumerSection::Missing,
-        Some(section) => match frontmatter::table_of(&section.body).and_then(|t| fields_of(&t)) {
-            None => ConsumerSection::NoFields,
-            Some(fields) => ConsumerSection::Fields(fields),
-        },
+    let section = find_contract(&sections, name);
+    let table = section
+        .and_then(|section| frontmatter::table_of(&section.body))
+        .and_then(|table| fields_of(&table));
+    // A row that names a model needs no section of its own, so the schema is
+    // read before the section is looked for.
+    let named = consumed_schema(&parsed.fields, &parsed.body, name)
+        .or_else(|| section.and_then(|section| model_line(&section.body)))
+        .map(|entity| entity.trim_end_matches("[]").trim().to_string())
+        .filter(|entity| !entity.is_empty());
+    let read = match (table, &named) {
+        (Some(table), Some(entity)) => {
+            warnings.push(format!(
+                "{name} lists fields and names model {entity}; the table wins"
+            ));
+            Some(table)
+        }
+        (Some(table), None) => Some(table),
+        (None, Some(entity)) => models.and_then(|text| model_fields(text, entity)),
+        (None, None) => None,
+    };
+    let section = match (read, section.is_some() || named.is_some()) {
+        (Some(fields), _) => ConsumerSection::Fields(fields),
+        (None, true) => ConsumerSection::NoFields,
+        (None, false) => ConsumerSection::Missing,
     };
     ConsumerPage {
         generated_date,
         section,
+        warnings,
     }
 }
 
@@ -319,6 +362,15 @@ pub(crate) fn compare(producer: &[PayloadField], consumer: &[PayloadField]) -> V
         }
     }
     findings
+}
+
+// A chapter a repo need not have.
+fn read_page(dir: &Path, page: &str) -> Result<Option<String>> {
+    match fs::read_to_string(dir.join(page)) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub(crate) fn run(
@@ -413,14 +465,20 @@ pub(crate) fn run(
         };
         for edge in edges {
             let consumer = edge.to_repo;
-            let page = match fs::read_to_string(clone.join(&consumer).join(INTERFACES_PAGE)) {
-                Ok(text) => consumer_page(&text, &name),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => ConsumerPage {
+            let folder = clone.join(&consumer);
+            let page = match read_page(&folder, INTERFACES_PAGE)? {
+                Some(text) => {
+                    let models = read_page(&folder, MODELS_PAGE)?;
+                    consumer_page(&text, &name, models.as_deref())
+                }
+                None => ConsumerPage {
                     generated_date: None,
                     section: ConsumerSection::Missing,
+                    warnings: Vec::new(),
                 },
-                Err(e) => return Err(e.into()),
             };
+            out.warnings
+                .extend(page.warnings.iter().map(|w| format!("{consumer}: {w}")));
             let mut consumer_out = ConsumerOut {
                 repo: consumer.clone(),
                 fields: Vec::new(),
@@ -617,18 +675,18 @@ mod tests {
     fn s14_consumer_page_reports_missing_no_fields_and_fields() {
         let head = "---\ngenerated_date: 2026-09-01\n---\n\n## Consumes\n\n| Kind | Name | From |\n|---|---|---|\n| http | GET /records | record-store |\n";
         assert_eq!(
-            consumer_page(head, "GET /records").section,
+            consumer_page(head, "GET /records", None).section,
             ConsumerSection::Missing
         );
         let prose = format!("{head}\n### GET /records (v2)\n\nStill being written.\n");
         assert_eq!(
-            consumer_page(&prose, "GET /records").section,
+            consumer_page(&prose, "GET /records", None).section,
             ConsumerSection::NoFields
         );
         let listed = format!(
             "{head}\n### GET /records (v2)\n\n| Field | Type | Required |\n|---|---|---|\n| id | string | yes |\n"
         );
-        let page = consumer_page(&listed, "GET /records");
+        let page = consumer_page(&listed, "GET /records", None);
         assert_eq!(page.generated_date.as_deref(), Some("2026-09-01"));
         assert_eq!(
             page.section,

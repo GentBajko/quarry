@@ -754,3 +754,147 @@ fn s14_a_model_line_in_the_payload_section_resolves_too() {
         stdout(&out)
     );
 }
+
+/// The two fields ingest-api publishes as `FileIngestMessage`.
+const INGEST_FIELDS: &[(&str, &str, &str)] = &[
+    ("file_id", "string", "yes"),
+    ("content_type", "enum", "yes"),
+];
+
+/// ingest-api produces `sqs file-ingest` as `FileIngestMessage`; record-store
+/// reads it as `schema`, declared in its own models chapter as `entity`.
+/// Neither page names the other. A non-empty `inline` gives the consumer a
+/// table of its own beside the model.
+fn schema_world(schema: &str, entity: &str, inline: &[(&str, &str, &str)]) -> World {
+    let w = world();
+    assert!(w.run(&["init", "--url", &w.docs_url]).status.success());
+    w.write_docs(&[
+        ("00-index.md", &index_page("2026-09-07")),
+        (
+            "09-interfaces.md",
+            &producer_page_with_schema(
+                "2026-09-07",
+                "",
+                "sqs",
+                "file-ingest",
+                "FileIngestMessage",
+                &[],
+            ),
+        ),
+        (
+            "02-models.md",
+            &models_page("2026-09-07", "FileIngestMessage", INGEST_FIELDS),
+        ),
+    ]);
+    w.commit_push("docs");
+    assert!(w.run(&["add"]).status.success());
+
+    let consumer = w.other_repo("record-store");
+    w.write_docs_in(
+        &consumer,
+        &[
+            ("00-index.md", &index_page("2026-09-07")),
+            (
+                "09-interfaces.md",
+                &consumer_page_with_schema("2026-09-07", "sqs", "file-ingest", schema, inline),
+            ),
+            (
+                "02-models.md",
+                &models_page("2026-09-07", entity, INGEST_FIELDS),
+            ),
+        ],
+    );
+    w.commit_push_in(&consumer, "docs");
+    assert!(w.run_in(&consumer, &["add"]).status.success());
+    assert!(w.run(&["sync"]).status.success());
+    w
+}
+
+/// Rewrites ingest-api's working-tree models chapter.
+fn set_producer_fields(w: &World, fields: &[(&str, &str, &str)]) {
+    w.write_docs(&[(
+        "02-models.md",
+        &models_page("2026-09-07", "FileIngestMessage", fields),
+    )]);
+}
+
+#[test]
+fn s14_a_field_the_consumers_model_reads_is_a_break() {
+    let w = schema_world("IngestedFile", "IngestedFile", &[]);
+    let clean = w.run(&["check"]);
+    assert_eq!(code(&clean), 0, "{}", stderr(&clean));
+    assert!(
+        stdout(&clean).contains("  record-store reads file_id, content_type   (2026-09-07)\n"),
+        "{}",
+        stdout(&clean)
+    );
+
+    set_producer_fields(&w, &INGEST_FIELDS[..1]);
+    let out = w.run(&["check"]);
+    assert_eq!(code(&out), 1, "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "ingest-api produces sqs file-ingest (fields from 02-models.md § FileIngestMessage)\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("  break: content_type no longer produced\n"),
+        "{text}"
+    );
+    assert!(text.ends_with("1 break\n"), "{text}");
+}
+
+#[test]
+fn s14_two_models_that_agree_are_clean() {
+    let w = schema_world("IngestedFile", "IngestedFile", &[]);
+    let out = w.run(&["--json", "check"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let value = json(&out);
+    assert_eq!(
+        value["result"]["breaks"].as_array().expect("breaks").len(),
+        0,
+        "{}",
+        stdout(&out)
+    );
+    let consumer = &value["result"]["contracts"][0]["consumers"][0];
+    assert_eq!(
+        consumer["fields"],
+        serde_json::json!(["file_id", "content_type"])
+    );
+}
+
+#[test]
+fn s14_a_consumer_model_its_own_chapter_lacks_is_a_note() {
+    let w = schema_world("IngestedFile", "SomethingElse", &[]);
+    set_producer_fields(&w, &INGEST_FIELDS[..1]);
+    let out = w.run(&["check"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains("note: record-store lists no fields for file-ingest\n"),
+        "{text}"
+    );
+    assert!(text.ends_with("no breaks\n"), "{text}");
+}
+
+#[test]
+fn s14_a_consumers_inline_table_wins_over_its_schema() {
+    let w = schema_world("IngestedFile", "IngestedFile", &INGEST_FIELDS[..1]);
+    set_producer_fields(&w, &INGEST_FIELDS[..1]);
+    let out = w.run(&["check"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(
+        text.contains(
+            "warning: record-store: file-ingest lists fields and names model IngestedFile; the table wins\n"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("  record-store reads file_id   (2026-09-07)\n"),
+        "{text}"
+    );
+    assert!(text.ends_with("no breaks\n"), "{text}");
+}
