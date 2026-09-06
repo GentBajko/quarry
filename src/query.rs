@@ -5,7 +5,7 @@ use std::collections::{HashSet, VecDeque};
 use serde::Serialize;
 
 use crate::errors::{QuarryError, Result};
-use crate::index::{Edge, Index, PageRow, RepoRow};
+use crate::index::{Edge, Index, PageRow, Publication, RepoRow};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Direction {
@@ -37,6 +37,7 @@ pub(crate) struct RepoShow {
     pub(crate) produces: Vec<Edge>,
     pub(crate) consumes: Vec<Edge>,
     pub(crate) overview: Option<SectionHit>,
+    pub(crate) publications: Vec<Publication>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,6 +51,9 @@ pub(crate) struct DepEdge {
     pub(crate) cycle: bool,
     pub(crate) via: Vec<String>,
     pub(crate) site_unverified: bool,
+    pub(crate) by_name: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) as_declared: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,11 +98,13 @@ pub(crate) fn show(index: &Index, repo: &str) -> Result<RepoShow> {
         .ok_or_else(|| QuarryError::refusal(format!("unknown repo {repo}")))?;
     let (produces, consumes) = index.repo_edges(repo)?;
     let overview = first_section(index, repo, "00-index.md")?;
+    let publications = index.publications(repo)?;
     Ok(RepoShow {
         repo: row,
         produces,
         consumes,
         overview,
+        publications,
     })
 }
 
@@ -233,6 +239,19 @@ pub(crate) fn search(
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
+fn consumers_by_name(index: &Index, node: &str, name: &str) -> Result<Vec<String>> {
+    let quoted = format!("\"{}\"", name.replace('"', "\"\""));
+    let sql = "SELECT DISTINCT s.repo FROM sections s
+               WHERE sections MATCH ?1 AND s.path = ?2 AND s.repo != ?3
+               ORDER BY s.repo";
+    let mut statement = index.connection.prepare(sql)?;
+    let rows = statement.query_map(
+        rusqlite::params![quoted, crate::frontmatter::INTERFACES_PAGE, node],
+        |row| row.get::<_, String>(0),
+    )?;
+    Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
+}
+
 pub(crate) fn deps(
     index: &Index,
     repo: &str,
@@ -248,12 +267,15 @@ pub(crate) fn deps(
     let mut max_depth = 0;
     while let Some((node, at)) = frontier.pop_front() {
         if depth != 0 && at >= depth {
-            if !index.edges(&node, downstream)?.is_empty() {
+            if !index.edges(&node, downstream)?.is_empty()
+                || (downstream && !index.publications(&node)?.is_empty())
+            {
                 truncated = true;
             }
             continue;
         }
-        for edge in index.edges(&node, downstream)? {
+        let node_edges = index.edges(&node, downstream)?;
+        for edge in &node_edges {
             let other = if downstream {
                 edge.to_repo.clone()
             } else {
@@ -270,6 +292,8 @@ pub(crate) fn deps(
                 cycle,
                 via: edge.via.clone(),
                 site_unverified: edge.site_unverified,
+                by_name: false,
+                as_declared: edge.as_declared.clone(),
             });
             max_depth = max_depth.max(at + 1);
             if !cycle && !edge.missing {
@@ -277,9 +301,40 @@ pub(crate) fn deps(
                 frontier.push_back((other, at + 1));
             }
         }
+        if !downstream {
+            continue;
+        }
+        // A by-name row is a lead: never expanded, never counted as a repo,
+        // and skipped when the consumer already declared the edge.
+        for publication in index.publications(&node)? {
+            let wanted = crate::frontmatter::normalize_heading(&publication.name);
+            for hit in consumers_by_name(index, &node, &publication.name)? {
+                let declared = node_edges.iter().any(|e| {
+                    e.to_repo == hit && crate::frontmatter::normalize_heading(&e.name) == wanted
+                });
+                if declared {
+                    continue;
+                }
+                edges.push(DepEdge {
+                    repo: hit,
+                    kind: publication.kind.clone(),
+                    name: publication.name.clone(),
+                    depth: at + 1,
+                    declared_by: "by-name".to_string(),
+                    missing: false,
+                    cycle: false,
+                    via: publication.via.clone(),
+                    site_unverified: false,
+                    by_name: true,
+                    as_declared: None,
+                });
+                max_depth = max_depth.max(at + 1);
+            }
+        }
     }
     let repos = edges
         .iter()
+        .filter(|e| !e.by_name)
         .map(|e| e.repo.clone())
         .collect::<HashSet<_>>()
         .len();

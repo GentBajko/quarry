@@ -234,6 +234,29 @@ unverifiable site, and write nothing. A chapter whose frontmatter carries
 `mode: prescriptive` names planned paths. Its sites are skipped: nothing
 is noted or stamped, and `--strict` does not refuse on it.
 
+The join key is the folder name, the last segment of the origin URL, and
+the consumer's code usually knows a hostname or a compose service name
+instead. A producer can list what it is called:
+
+```yaml
+known_as: [records.internal, records-service, records-svc]
+```
+
+on any of its pages, and Capstone writes it into `09-interfaces.md` from
+the deploy config. A `to`/`from` cell resolves against the exact folder
+name first, then case-insensitively, then through those aliases. An edge
+that resolved through an alias keeps the string as written in
+`as_declared` and prints `(declared as records-svc)`, so the disagreement
+stays visible. An alias two repos claim is ignored with a warning, and
+`quarry docs index` lists every target that resolved to nothing with the
+nearest registered names beside it.
+
+A producer that cannot name its callers writes `to: unknown`. That row is
+a publication: counted, searchable, shown by `docs show` as `-> (unknown)`,
+and never an edge. `docs deps --downstream` then appends repos whose
+interfaces page mentions the name, marked `(by name only)`. Treat that
+list as a lead and confirm it before acting on it.
+
 ## Commands
 
 **In a source repo**
@@ -250,13 +273,13 @@ is noted or stamped, and `--strict` does not refuse on it.
 
 | Command | What it answers |
 | --- | --- |
-| `quarry docs list [<repo>]` | Every repo with its page and edge counts, or one repo's files |
-| `quarry docs show <repo>` | Stamps, both edge directions, and the repo's overview section |
+| `quarry docs list [<repo>]` | Every repo with its page and edge counts, or one repo's files. `--json` adds each repo's `known_as` list |
+| `quarry docs show <repo>` | Stamps, aliases, both edge directions, publications with unknown consumers, and the repo's overview section |
 | `quarry docs section <repo> "<heading>"` | One section by heading. Exact match first, then prefix; an ambiguous heading lists the candidates and exits 1 |
 | `quarry docs search "<term>" [--repo] [--limit]` | Full-text hits by repo, file and heading |
-| `quarry docs deps <repo> --downstream\|--upstream [--depth N]` | The edge walk. `--depth 0` is unlimited; cycles are marked once and not expanded |
+| `quarry docs deps <repo> --downstream\|--upstream [--depth N]` | The edge walk. `--depth 0` is unlimited; cycles are marked once and not expanded. Publications add possible consumers `(by name only)` |
 | `quarry docs path <a> <b>` | The shortest chain of edges, falling back to the reverse direction |
-| `quarry docs index [--force]` | Rebuild the local index without touching the network |
+| `quarry docs index [--force]` | Rebuild the local index without touching the network, listing every edge target that resolved to nothing |
 
 Every command takes `--json` and prints exactly one JSON document,
 including on failure. Add `--verbose` to see each git command on stderr.
@@ -384,6 +407,8 @@ including the one your CI runs on every job.
 The repo's name in the docs repo is the last path segment of its `origin`
 URL and is not configurable. Two repos from different owners claiming one
 name is refused, on the strength of the origin recorded in the stamp.
+Other names a repo answers to go in a `known_as` list in its own pages;
+they are resolved at index time and never change the folder name.
 
 </details>
 

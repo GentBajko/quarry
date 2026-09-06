@@ -15,8 +15,46 @@ use crate::frontmatter;
 pub(crate) const SCHEMA_VERSION: i64 = 2;
 
 type EdgeKey = (String, String, String, String);
-type Sides = (bool, bool, BTreeSet<String>);
-type Declaration = (String, String, String, String, bool, String);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Declaration {
+    owner: String,
+    other: String,
+    kind: String,
+    name: String,
+    produces: bool,
+    via: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct EdgeSides {
+    by_producer: bool,
+    by_consumer: bool,
+    via: BTreeSet<String>,
+    declared_as: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct NameRegistry {
+    pub(crate) names: BTreeSet<String>,
+    pub(crate) folded: BTreeMap<String, String>,
+    pub(crate) aliases: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct Unresolved {
+    pub(crate) declared: String,
+    pub(crate) via: Vec<String>,
+    pub(crate) nearest: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct Publication {
+    pub(crate) repo: String,
+    pub(crate) kind: String,
+    pub(crate) name: String,
+    pub(crate) via: Vec<String>,
+}
 
 pub(crate) const MAX_PAGE_BYTES: u64 = 5 * 1024 * 1024;
 
@@ -29,7 +67,8 @@ CREATE TABLE repos (
   newest_generated_date TEXT,
   pages INTEGER NOT NULL,
   produces INTEGER NOT NULL DEFAULT 0,
-  consumes INTEGER NOT NULL DEFAULT 0
+  consumes INTEGER NOT NULL DEFAULT 0,
+  known_as TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE pages (
   repo TEXT NOT NULL,
@@ -47,9 +86,18 @@ CREATE TABLE edges (
   via TEXT NOT NULL,
   missing INTEGER NOT NULL DEFAULT 0,
   site_unverified INTEGER NOT NULL DEFAULT 0,
+  as_declared TEXT,
   PRIMARY KEY (from_repo, to_repo, kind, name)
 );
 CREATE INDEX edges_to ON edges (to_repo);
+CREATE TABLE aliases (alias TEXT PRIMARY KEY, repo TEXT NOT NULL);
+CREATE TABLE publications (
+  repo TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  via TEXT NOT NULL,
+  PRIMARY KEY (repo, kind, name)
+);
 CREATE VIRTUAL TABLE sections USING fts5 (
   repo UNINDEXED, path UNINDEXED, heading, normalized UNINDEXED, level UNINDEXED, body,
   tokenize = 'unicode61'
@@ -65,6 +113,7 @@ pub(crate) struct RepoRow {
     pub(crate) pages: u32,
     pub(crate) produces: u32,
     pub(crate) consumes: u32,
+    pub(crate) known_as: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -77,6 +126,8 @@ pub(crate) struct Edge {
     pub(crate) via: Vec<String>,
     pub(crate) missing: bool,
     pub(crate) site_unverified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) as_declared: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +145,7 @@ pub(crate) struct RepoScan {
     pub(crate) pages: u32,
     pub(crate) produces: u32,
     pub(crate) consumes: u32,
+    pub(crate) known_as: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -103,6 +155,7 @@ pub(crate) struct RebuildReport {
     pub(crate) edges: u32,
     pub(crate) warnings: Vec<String>,
     pub(crate) rebuilt: bool,
+    pub(crate) unresolved: Vec<Unresolved>,
 }
 
 pub(crate) struct Index {
@@ -191,6 +244,9 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
         let mut declarations: Vec<Declaration> = Vec::new();
         let mut names: BTreeSet<String> = BTreeSet::new();
         let mut unverified: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut claims: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut publications_acc: BTreeMap<(String, String, String), BTreeSet<String>> =
+            BTreeMap::new();
         for dir in docsrepo::read_repo_dirs(clone)? {
             let name = dir
                 .file_name()
@@ -198,6 +254,7 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                 .unwrap_or_default();
             names.insert(name.clone());
             let mut scan = RepoScan::default();
+            let mut known_as: BTreeSet<String> = BTreeSet::new();
             let stamp_path = dir.join(docsrepo::STAMP_FILE);
             if let Ok(text) = fs::read_to_string(&stamp_path)
                 && let Ok(stamp) = serde_json::from_str::<docsrepo::Stamp>(&text)
@@ -222,6 +279,13 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                         .warnings
                         .push(format!("{name}/{relative}: {warning}"));
                 }
+                let (aliases, alias_warnings) = frontmatter::known_as_of(&parsed.fields);
+                for warning in alias_warnings {
+                    report
+                        .warnings
+                        .push(format!("{name}/{relative}: {warning}"));
+                }
+                known_as.extend(aliases);
                 let generated_date = parsed
                     .fields
                     .get("generated_date")
@@ -259,47 +323,80 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                         .push(format!("{name}/{relative}: {warning}"));
                 }
                 for edge in edges {
-                    let (from, to) = if edge.produces {
-                        (name.clone(), edge.other.clone())
-                    } else {
-                        (edge.other.clone(), name.clone())
-                    };
+                    let via = format!("{name}/{relative}");
                     if edge.produces {
                         scan.produces += 1;
                     } else {
                         scan.consumes += 1;
                     }
-                    declarations.push((
-                        from,
-                        to,
-                        edge.kind,
-                        edge.name,
-                        edge.produces,
-                        format!("{name}/{relative}"),
-                    ));
+                    if edge.produces && frontmatter::is_unknown_target(&edge.other) {
+                        publications_acc
+                            .entry((name.clone(), edge.kind, edge.name))
+                            .or_default()
+                            .insert(via);
+                        continue;
+                    }
+                    declarations.push(Declaration {
+                        owner: name.clone(),
+                        other: edge.other,
+                        kind: edge.kind,
+                        name: edge.name,
+                        produces: edge.produces,
+                        via,
+                    });
                 }
             }
+            for alias in &known_as {
+                claims
+                    .entry(alias.to_lowercase())
+                    .or_default()
+                    .insert(name.clone());
+            }
+            scan.known_as = known_as.into_iter().collect();
             transaction.execute(
-                "INSERT OR REPLACE INTO repos (name, commit_sha, origin, newest_generated_date, pages, produces, consumes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![name, scan.commit, scan.origin, scan.newest_generated_date, scan.pages, scan.produces, scan.consumes],
+                "INSERT OR REPLACE INTO repos (name, commit_sha, origin, newest_generated_date, pages, produces, consumes, known_as) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![name, scan.commit, scan.origin, scan.newest_generated_date, scan.pages, scan.produces, scan.consumes, serde_json::to_string(&scan.known_as)?],
             )?;
             report.repos += 1;
         }
-        let mut merged: BTreeMap<EdgeKey, Sides> = BTreeMap::new();
-        for (from, to, kind, name, produces, via) in declarations {
-            let entry =
-                merged
-                    .entry((from, to, kind, name))
-                    .or_insert((false, false, BTreeSet::new()));
-            if produces {
-                entry.0 = true;
+        let (registry, alias_warnings) = build_registry(&names, &claims);
+        report.warnings.extend(alias_warnings);
+        let mut unresolved: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut merged: BTreeMap<EdgeKey, EdgeSides> = BTreeMap::new();
+        for declaration in declarations {
+            let resolved = resolve_name(&registry, &declaration.other);
+            let other = match &resolved {
+                Some(name) => name.clone(),
+                None => {
+                    if !frontmatter::is_unknown_target(&declaration.other) {
+                        unresolved
+                            .entry(declaration.other.clone())
+                            .or_default()
+                            .insert(declaration.via.clone());
+                    }
+                    declaration.other.clone()
+                }
+            };
+            let (from, to) = if declaration.produces {
+                (declaration.owner.clone(), other)
             } else {
-                entry.1 = true;
+                (other, declaration.owner.clone())
+            };
+            let entry = merged
+                .entry((from, to, declaration.kind, declaration.name))
+                .or_default();
+            if declaration.produces {
+                entry.by_producer = true;
+            } else {
+                entry.by_consumer = true;
             }
-            entry.2.insert(via);
+            entry.via.insert(declaration.via);
+            if resolved.as_deref().is_some_and(|r| r != declaration.other) {
+                entry.declared_as.insert(declaration.other);
+            }
         }
-        for ((from, to, kind, name), (by_producer, by_consumer, via)) in merged {
-            let declared_by = match (by_producer, by_consumer) {
+        for ((from, to, kind, name), sides) in merged {
+            let declared_by = match (sides.by_producer, sides.by_consumer) {
                 (true, true) => "both",
                 (true, false) => "producer",
                 _ => "consumer",
@@ -308,13 +405,50 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
             let key = format!("{kind} {name}");
             let site_unverified = unverified.contains(&(from.clone(), key.clone()))
                 || unverified.contains(&(to.clone(), key));
-            let via_json = serde_json::to_string(&via.iter().collect::<Vec<_>>())?;
+            let via_json = serde_json::to_string(&sides.via.iter().collect::<Vec<_>>())?;
+            let as_declared = if sides.declared_as.is_empty() {
+                None
+            } else {
+                Some(
+                    sides
+                        .declared_as
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                )
+            };
             transaction.execute(
-                "INSERT OR REPLACE INTO edges (from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                rusqlite::params![from, to, kind, name, declared_by, via_json, missing as i64, site_unverified as i64],
+                "INSERT OR REPLACE INTO edges (from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![from, to, kind, name, declared_by, via_json, missing as i64, site_unverified as i64, as_declared],
             )?;
             report.edges += 1;
         }
+        for ((repo, kind, name), via) in publications_acc {
+            transaction.execute(
+                "INSERT INTO publications (repo, kind, name, via) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    repo,
+                    kind,
+                    name,
+                    serde_json::to_string(&via.iter().collect::<Vec<_>>())?
+                ],
+            )?;
+        }
+        for (alias, repo) in &registry.aliases {
+            transaction.execute(
+                "INSERT INTO aliases (alias, repo) VALUES (?1, ?2)",
+                rusqlite::params![alias, repo],
+            )?;
+        }
+        report.unresolved = unresolved
+            .into_iter()
+            .map(|(declared, via)| Unresolved {
+                nearest: nearest_names(&registry, &declared),
+                via: via.into_iter().collect(),
+                declared,
+            })
+            .collect();
         transaction.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('built_at_commit', ?1)",
             [head],
@@ -408,12 +542,119 @@ pub(crate) fn markdown_files(dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
+// Folder names win over aliases. A lowercase key two folders share is left
+// out of `folded` (exact match still works for both); an alias two repos
+// claim, or one that is another repo's folder name, is dropped with a warning.
+pub(crate) fn build_registry(
+    names: &BTreeSet<String>,
+    claims: &BTreeMap<String, BTreeSet<String>>,
+) -> (NameRegistry, Vec<String>) {
+    let mut warnings = Vec::new();
+    let mut by_lower: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for name in names {
+        by_lower
+            .entry(name.to_lowercase())
+            .or_default()
+            .push(name.clone());
+    }
+    let folded: BTreeMap<String, String> = by_lower
+        .iter()
+        .filter(|(_, owners)| owners.len() == 1)
+        .map(|(lower, owners)| (lower.clone(), owners[0].clone()))
+        .collect();
+    let mut aliases: BTreeMap<String, String> = BTreeMap::new();
+    for (alias, claimants) in claims {
+        let remaining: BTreeSet<String> = claimants
+            .iter()
+            .filter(|c| c.to_lowercase() != *alias)
+            .cloned()
+            .collect();
+        if remaining.is_empty() {
+            continue;
+        }
+        if let Some(owners) = by_lower.get(alias) {
+            let owner = owners.first().cloned().unwrap_or_default();
+            for claimant in &remaining {
+                warnings.push(format!(
+                    "alias {alias} claimed by {claimant} is repo {owner}'s name; ignored"
+                ));
+            }
+            continue;
+        }
+        if remaining.len() > 1 {
+            warnings.push(format!(
+                "alias {alias} claimed by {}; ignored",
+                join_claimants(&remaining)
+            ));
+            continue;
+        }
+        if let Some(claimant) = remaining.into_iter().next() {
+            aliases.insert(alias.clone(), claimant);
+        }
+    }
+    (
+        NameRegistry {
+            names: names.clone(),
+            folded,
+            aliases,
+        },
+        warnings,
+    )
+}
+
+fn join_claimants(claimants: &BTreeSet<String>) -> String {
+    let list: Vec<&str> = claimants.iter().map(String::as_str).collect();
+    match list.split_last() {
+        None => String::new(),
+        Some((last, [])) => (*last).to_string(),
+        Some((last, head)) => format!("{} and {last}", head.join(", ")),
+    }
+}
+
+pub(crate) fn resolve_name(registry: &NameRegistry, declared: &str) -> Option<String> {
+    if registry.names.contains(declared) {
+        return Some(declared.to_string());
+    }
+    let lower = declared.to_lowercase();
+    if let Some(name) = registry.folded.get(&lower) {
+        return Some(name.clone());
+    }
+    registry.aliases.get(&lower).cloned()
+}
+
+// Same scorer shape as `query::nearest`: longest shared prefix first, ties
+// alphabetical, at most three. Aliases enter as their lowercased usable keys
+// so every suggestion is a string that resolves.
+pub(crate) fn nearest_names(registry: &NameRegistry, declared: &str) -> Vec<String> {
+    let lower = declared.to_lowercase();
+    let mut scored: Vec<(usize, String)> = registry
+        .names
+        .iter()
+        .cloned()
+        .chain(registry.aliases.keys().cloned())
+        .map(|candidate| {
+            let shared = candidate
+                .to_lowercase()
+                .chars()
+                .zip(lower.chars())
+                .take_while(|(a, b)| a == b)
+                .count();
+            (shared, candidate)
+        })
+        .filter(|(shared, _)| *shared > 0)
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    scored.dedup_by(|a, b| a.1 == b.1);
+    scored.into_iter().take(3).map(|(_, s)| s).collect()
+}
+
 impl Index {
     pub(crate) fn repos(&self) -> Result<Vec<RepoRow>> {
         let mut statement = self.connection.prepare(
-            "SELECT name, commit_sha, origin, newest_generated_date, pages, produces, consumes FROM repos ORDER BY name",
+            "SELECT name, commit_sha, origin, newest_generated_date, pages, produces, consumes, known_as FROM repos ORDER BY name",
         )?;
         let rows = statement.query_map([], |row| {
+            let known_as: String = row.get(7)?;
             Ok(RepoRow {
                 name: row.get(0)?,
                 commit: row.get(1)?,
@@ -422,6 +663,7 @@ impl Index {
                 pages: row.get(4)?,
                 produces: row.get(5)?,
                 consumes: row.get(6)?,
+                known_as: serde_json::from_str(&known_as).unwrap_or_default(),
             })
         })?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -454,9 +696,9 @@ impl Index {
 
     pub(crate) fn edges(&self, repo: &str, downstream: bool) -> Result<Vec<Edge>> {
         let sql = if downstream {
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified FROM edges WHERE from_repo = ?1 ORDER BY to_repo, kind, name"
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared FROM edges WHERE from_repo = ?1 ORDER BY to_repo, kind, name"
         } else {
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified FROM edges WHERE to_repo = ?1 ORDER BY from_repo, kind, name"
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared FROM edges WHERE to_repo = ?1 ORDER BY from_repo, kind, name"
         };
         let mut statement = self.connection.prepare(sql)?;
         let rows = statement.query_map([repo], row_to_edge)?;
@@ -465,7 +707,7 @@ impl Index {
 
     pub(crate) fn edges_touching(&self, repo: &str) -> Result<Vec<Edge>> {
         let mut statement = self.connection.prepare(
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified FROM edges WHERE from_repo = ?1 OR to_repo = ?1 ORDER BY from_repo, to_repo, kind, name",
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared FROM edges WHERE from_repo = ?1 OR to_repo = ?1 ORDER BY from_repo, to_repo, kind, name",
         )?;
         let rows = statement.query_map([repo], row_to_edge)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -473,6 +715,22 @@ impl Index {
 
     pub(crate) fn repo_edges(&self, repo: &str) -> Result<(Vec<Edge>, Vec<Edge>)> {
         Ok((self.edges(repo, true)?, self.edges(repo, false)?))
+    }
+
+    pub(crate) fn publications(&self, repo: &str) -> Result<Vec<Publication>> {
+        let mut statement = self.connection.prepare(
+            "SELECT kind, name, via FROM publications WHERE repo = ?1 ORDER BY kind, name",
+        )?;
+        let rows = statement.query_map([repo], |row| {
+            let via: String = row.get(2)?;
+            Ok(Publication {
+                repo: repo.to_string(),
+                kind: row.get(0)?,
+                name: row.get(1)?,
+                via: serde_json::from_str(&via).unwrap_or_default(),
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
     }
 }
 
@@ -487,6 +745,7 @@ fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<Edge> {
         via: serde_json::from_str(&via).unwrap_or_default(),
         missing: row.get::<_, i64>(6)? != 0,
         site_unverified: row.get::<_, i64>(7)? != 0,
+        as_declared: row.get(8)?,
     })
 }
 
@@ -494,7 +753,85 @@ fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<Edge> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+    use std::collections::{BTreeMap, BTreeSet};
+
     use rusqlite::Connection;
+
+    use super::{build_registry, nearest_names, resolve_name};
+
+    fn names(list: &[&str]) -> BTreeSet<String> {
+        list.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    fn claims(list: &[(&str, &[&str])]) -> BTreeMap<String, BTreeSet<String>> {
+        list.iter()
+            .map(|(alias, claimants)| ((*alias).to_string(), names(claimants)))
+            .collect()
+    }
+
+    #[test]
+    fn s15_resolution_order_is_exact_then_case_then_alias() {
+        let (registry, warnings) = build_registry(
+            &names(&["record-store", "Records"]),
+            &claims(&[("records-svc", &["record-store"])]),
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            resolve_name(&registry, "record-store").as_deref(),
+            Some("record-store")
+        );
+        assert_eq!(
+            resolve_name(&registry, "Record-Store").as_deref(),
+            Some("record-store")
+        );
+        assert_eq!(
+            resolve_name(&registry, "RECORDS-SVC").as_deref(),
+            Some("record-store")
+        );
+        assert_eq!(
+            resolve_name(&registry, "records").as_deref(),
+            Some("Records")
+        );
+        assert_eq!(resolve_name(&registry, "nope"), None);
+    }
+
+    #[test]
+    fn s15_an_alias_claimed_twice_is_dropped_with_a_warning() {
+        let (registry, warnings) =
+            build_registry(&names(&["a", "b"]), &claims(&[("shared", &["a", "b"])]));
+        assert!(registry.aliases.is_empty(), "{:?}", registry.aliases);
+        assert_eq!(warnings, ["alias shared claimed by a and b; ignored"]);
+    }
+
+    #[test]
+    fn s15_an_alias_equal_to_a_repo_name_is_dropped_with_a_warning() {
+        let (registry, warnings) = build_registry(&names(&["a", "b"]), &claims(&[("b", &["a"])]));
+        assert!(registry.aliases.is_empty(), "{:?}", registry.aliases);
+        assert_eq!(warnings, ["alias b claimed by a is repo b's name; ignored"]);
+        let (registry, warnings) = build_registry(&names(&["a", "b"]), &claims(&[("a", &["a"])]));
+        assert!(registry.aliases.is_empty(), "{:?}", registry.aliases);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn s15_nearest_names_prefer_the_longest_prefix() {
+        let (registry, _) = build_registry(
+            &names(&[
+                "record-store",
+                "report-builder",
+                "ingest-api",
+                "records-api",
+            ]),
+            &claims(&[("records.internal", &["record-store"])]),
+        );
+        // Shared prefixes with `records-svc`: `records-api` 8 (`records-`),
+        // `records.internal` 7 (`records`), `record-store` 6 (`record`); no tie.
+        assert_eq!(
+            nearest_names(&registry, "records-svc"),
+            ["records-api", "records.internal", "record-store"]
+        );
+        assert!(nearest_names(&registry, "zzz").is_empty());
+    }
 
     #[test]
     fn s5_bundled_sqlite_has_fts5() {

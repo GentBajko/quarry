@@ -75,7 +75,7 @@ pub(crate) enum DocsCommand {
         /// Limit the listing to one repo.
         repo: Option<String>,
     },
-    /// One repo's stamps, edges, and overview.
+    /// One repo's stamps, aliases, edges, publications, and overview.
     Show {
         /// The repo name.
         repo: String,
@@ -99,7 +99,7 @@ pub(crate) enum DocsCommand {
         limit: u32,
     },
     #[command(group(ArgGroup::new("dir").required(true).args(["downstream", "upstream"])))]
-    /// Who consumes what this repo produces, or the other way round.
+    /// Who consumes what this repo produces (declared edges, then possible consumers by name), or the other way round.
     Deps {
         /// The repo name.
         repo: String,
@@ -120,7 +120,7 @@ pub(crate) enum DocsCommand {
         /// The repo the chain ends at.
         to: String,
     },
-    /// Rebuild the local index.
+    /// Rebuild the local index and list edge targets that resolve to nothing.
     Index {
         /// Rebuild regardless of the stamps.
         #[arg(long)]

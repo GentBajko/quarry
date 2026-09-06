@@ -77,6 +77,40 @@ pub(crate) fn parse(text: &str) -> Parsed {
 
 pub(crate) const INTERFACES_PAGE: &str = "09-interfaces.md";
 
+pub(crate) const UNKNOWN_TARGET: &str = "unknown";
+
+pub(crate) fn is_unknown_target(other: &str) -> bool {
+    other.trim().eq_ignore_ascii_case(UNKNOWN_TARGET)
+}
+
+// The list as declared: trimmed, non-empty, first-occurrence deduped, original
+// case. A bare scalar is a warning rather than a one-item list so a template
+// bug upstream stays visible.
+pub(crate) fn known_as_of(fields: &Map<String, Value>) -> (Vec<String>, Vec<String>) {
+    let mut names: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let Some(value) = fields.get("known_as") else {
+        return (names, warnings);
+    };
+    let Some(items) = value.as_array() else {
+        warnings.push("known_as is not a list".to_string());
+        return (names, warnings);
+    };
+    for (i, item) in items.iter().enumerate() {
+        match item {
+            Value::String(s) if !s.trim().is_empty() => {
+                let s = s.trim().to_string();
+                if !names.contains(&s) {
+                    names.push(s);
+                }
+            }
+            Value::String(_) => warnings.push(format!("known_as[{i}] is empty")),
+            _ => warnings.push(format!("known_as[{i}] is not a string")),
+        }
+    }
+    (names, warnings)
+}
+
 pub(crate) fn edges_of(
     path: &str,
     fields: &Map<String, Value>,
@@ -222,14 +256,22 @@ fn split_row(line: &str) -> Vec<String> {
         .collect()
 }
 
+/// Removes one matched pair of surrounding backticks only, so a cell holding
+/// two separate inline-code spans keeps the backticks that separate them.
+fn unbacktick(text: &str) -> &str {
+    text.strip_prefix('`')
+        .and_then(|rest| rest.strip_suffix('`'))
+        .unwrap_or(text)
+}
+
 fn clean_cell(cell: &str) -> String {
-    let mut text = cell.trim().trim_matches('`').trim().to_string();
+    let mut text = unbacktick(cell.trim()).trim().to_string();
     if let Some(open) = text.find('[')
         && let Some(close) = text[open..].find("](")
     {
         text = text[open + 1..open + close].to_string();
     }
-    text.trim().trim_matches('`').trim().to_string()
+    unbacktick(text.trim()).trim().to_string()
 }
 
 fn table_entry(
@@ -506,6 +548,44 @@ mod tests {
     }
 
     #[test]
+    fn s15_known_as_reads_a_list_of_strings() {
+        let parsed = parse("---\nknown_as: [records-svc, records.internal, records-svc]\n---\n");
+        let (names, warnings) = known_as_of(&parsed.fields);
+        assert_eq!(names, ["records-svc", "records.internal"]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn s15_known_as_not_a_list_is_a_warning() {
+        let parsed = parse("---\nknown_as: records-svc\n---\n");
+        let (names, warnings) = known_as_of(&parsed.fields);
+        assert!(names.is_empty(), "{names:?}");
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].contains("known_as is not a list"),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn s15_known_as_non_string_items_are_warned_and_skipped() {
+        let parsed = parse("---\nknown_as: [a, 3, \"\"]\n---\n");
+        let (names, warnings) = known_as_of(&parsed.fields);
+        assert_eq!(names, ["a"]);
+        assert_eq!(
+            warnings,
+            ["known_as[1] is not a string", "known_as[2] is empty"]
+        );
+    }
+
+    #[test]
+    fn s15_unknown_target_is_case_insensitive() {
+        assert!(is_unknown_target("Unknown"));
+        assert!(is_unknown_target(" UNKNOWN "));
+        assert!(!is_unknown_target("unknown-service"));
+    }
+
+    #[test]
     fn s18_site_path_strips_a_line_or_range() {
         assert_eq!(site_path("src/a.rs:12"), "src/a.rs");
         assert_eq!(site_path("src/a.rs:10-20"), "src/a.rs");
@@ -547,6 +627,20 @@ mod tests {
             site_path(edges[0].site.as_deref().unwrap()),
             "src/publish.py"
         );
+    }
+
+    #[test]
+    fn s18_only_one_pair_of_backticks_comes_off_a_cell() {
+        assert_eq!(unbacktick("`src/a.rs:1`"), "src/a.rs:1");
+        assert_eq!(unbacktick("`a` and `b`"), "a` and `b");
+        assert_eq!(unbacktick("plain"), "plain");
+        assert_eq!(unbacktick("`"), "`");
+        let page = "---\ngenerated_date: 2026-09-04\n---\n\n## Produces\n\n| Kind | Name | To | Site |\n|---|---|---|---|\n| sqs | `a` and `b` | record-store | `src/publish.py:3` |\n";
+        let parsed = parse(page);
+        let (edges, warnings) = edges_of("09-interfaces.md", &parsed.fields, &parsed.body);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(edges[0].name, "a` and `b");
+        assert_eq!(edges[0].site.as_deref(), Some("src/publish.py:3"));
     }
 
     #[test]

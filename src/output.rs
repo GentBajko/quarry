@@ -278,13 +278,25 @@ fn human(payload: &Payload) -> String {
                     .unwrap_or_else(|| "-".to_string()),
                 out.repo.newest_generated_date.as_deref().unwrap_or("-")
             );
-            if out.produces.is_empty() {
+            if !out.repo.known_as.is_empty() {
+                text.push_str(&format!("known as: {}\n", out.repo.known_as.join(", ")));
+            }
+            if out.produces.is_empty() && out.publications.is_empty() {
                 text.push_str("produces: none\n");
             } else {
                 for edge in &out.produces {
                     text.push_str(&format!(
-                        "produces: {} {} -> {}\n",
-                        edge.kind, edge.name, edge.to_repo
+                        "produces: {} {} -> {}{}\n",
+                        edge.kind,
+                        edge.name,
+                        edge.to_repo,
+                        declared_as(edge.as_declared.as_deref())
+                    ));
+                }
+                for publication in &out.publications {
+                    text.push_str(&format!(
+                        "produces: {} {} -> (unknown)\n",
+                        publication.kind, publication.name
                     ));
                 }
             }
@@ -293,8 +305,11 @@ fn human(payload: &Payload) -> String {
             } else {
                 for edge in &out.consumes {
                     text.push_str(&format!(
-                        "consumes: {} {} <- {}\n",
-                        edge.kind, edge.name, edge.from_repo
+                        "consumes: {} {} <- {}{}\n",
+                        edge.kind,
+                        edge.name,
+                        edge.from_repo,
+                        declared_as(edge.as_declared.as_deref())
                     ));
                 }
             }
@@ -346,9 +361,12 @@ fn human(payload: &Payload) -> String {
                 if edge.cycle {
                     marks.push_str(" (cycle)");
                 }
-                if edge.declared_by != "both" {
+                if edge.by_name {
+                    marks.push_str(" (by name only)");
+                } else if edge.declared_by != "both" {
                     marks.push_str(&format!(" (declared by {} only)", edge.declared_by));
                 }
+                marks.push_str(&declared_as(edge.as_declared.as_deref()));
                 if edge.site_unverified {
                     marks.push_str(" (site unverified)");
                 }
@@ -402,8 +420,26 @@ fn human(payload: &Payload) -> String {
             for warning in &report.warnings {
                 text.push_str(&format!("warning: {warning}\n"));
             }
+            for entry in &report.unresolved {
+                text.push_str(&format!(
+                    "unresolved: {} ({})",
+                    entry.declared,
+                    entry.via.join(", ")
+                ));
+                if !entry.nearest.is_empty() {
+                    text.push_str(&format!("; nearest: {}", entry.nearest.join(", ")));
+                }
+                text.push('\n');
+            }
             text
         }
+    }
+}
+
+fn declared_as(as_declared: Option<&str>) -> String {
+    match as_declared {
+        Some(declared) => format!(" (declared as {declared})"),
+        None => String::new(),
     }
 }
 
@@ -442,6 +478,41 @@ mod tests {
         let text = error_envelope(&QuarryError::external("docs repo busy, retry"));
         let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         assert_eq!(value["code"], json!(2));
+    }
+
+    #[test]
+    fn s15_index_report_lists_unresolved_with_nearest() {
+        let report = RebuildReport {
+            rebuilt: true,
+            unresolved: vec![
+                crate::index::Unresolved {
+                    declared: "records-svc".to_string(),
+                    via: vec!["ingest-api/09-interfaces.md".to_string()],
+                    nearest: vec!["record-store".to_string(), "records-api".to_string()],
+                },
+                crate::index::Unresolved {
+                    declared: "ghost".to_string(),
+                    via: vec!["ingest-api/09-interfaces.md".to_string()],
+                    nearest: Vec::new(),
+                },
+            ],
+            ..RebuildReport::default()
+        };
+        let text = render(&Response::bare(Payload::Index(report)), false, None);
+        assert!(
+            text.contains(
+                "unresolved: records-svc (ingest-api/09-interfaces.md); nearest: record-store, records-api\n"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("unresolved: ghost (ingest-api/09-interfaces.md)\n"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("ghost (ingest-api/09-interfaces.md);"),
+            "{text}"
+        );
     }
 
     #[test]

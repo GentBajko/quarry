@@ -283,6 +283,52 @@ pub fn consumes_page(date: &str, from: &str, kind: &str, name: &str) -> String {
     )
 }
 
+/// A page declaring one produced contract whose consumers are unknown.
+pub fn produces_unknown_page(date: &str, kind: &str, name: &str) -> String {
+    produces_page(date, "unknown", kind, name)
+}
+
+/// A consumes page that also lists the names this repo is known by.
+pub fn aliased_consumes_page(
+    date: &str,
+    aliases: &[&str],
+    from: &str,
+    kind: &str,
+    name: &str,
+) -> String {
+    let list = alias_list(aliases);
+    format!(
+        "---\ngenerated_date: {date}\nknown_as:\n{list}consumes:\n  - kind: {kind}\n    name: {name}\n    from: {from}\n---\n\n## Consumes\n\n### {name} (v2)\n\n| Field | Type |\n|---|---|\n| file_id | string |\n"
+    )
+}
+
+/// A page whose frontmatter lists the names this repo answers to and declares
+/// no edges.
+pub fn known_as_page(date: &str, aliases: &[&str]) -> String {
+    let list = alias_list(aliases);
+    format!(
+        "---\ngenerated_date: {date}\nknown_as:\n{list}---\n\n# Overview\n\nWhat this repo is.\n"
+    )
+}
+
+fn alias_list(aliases: &[&str]) -> String {
+    aliases.iter().map(|a| format!("  - {a}\n")).collect()
+}
+
+/// An interfaces page that declares one produced edge and separately mentions
+/// another repo's contract by name.
+pub fn produces_and_mentions_page(
+    date: &str,
+    to: &str,
+    kind: &str,
+    name: &str,
+    mentions: &str,
+) -> String {
+    format!(
+        "---\ngenerated_date: {date}\nproduces:\n  - kind: {kind}\n    name: {name}\n    to: {to}\n---\n\n## Produces\n\n| Kind | Name |\n|---|---|\n| {kind} | {name} |\n\n## Consumes\n\n### {mentions} (v2)\n\n| Field | Type |\n|---|---|\n| id | string |\n"
+    )
+}
+
 pub struct Wired {
     pub w: World,
     pub data: PathBuf,
