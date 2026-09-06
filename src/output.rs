@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::errors::QuarryError;
-use crate::index::{RebuildReport, RepoRow};
+use crate::index::{Edge, RebuildReport, RepoRow};
 use crate::query::{DepsResult, PathResult, RepoShow, SearchHit, SectionHit};
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -290,7 +290,7 @@ fn human(payload: &Payload) -> String {
                         edge.kind,
                         edge.name,
                         edge.to_repo,
-                        declared_as(edge.as_declared.as_deref())
+                        edge_marks(edge, out.observed_file)
                     ));
                 }
                 for publication in &out.publications {
@@ -309,7 +309,7 @@ fn human(payload: &Payload) -> String {
                         edge.kind,
                         edge.name,
                         edge.from_repo,
-                        declared_as(edge.as_declared.as_deref())
+                        edge_marks(edge, out.observed_file)
                     ));
                 }
             }
@@ -361,15 +361,21 @@ fn human(payload: &Payload) -> String {
                 if edge.cycle {
                     marks.push_str(" (cycle)");
                 }
-                if edge.by_name {
-                    marks.push_str(" (by name only)");
-                } else if edge.declared_by != "both" {
-                    marks.push_str(&format!(" (declared by {} only)", edge.declared_by));
+                match edge.declared_by.as_str() {
+                    "both" | "observed" => {}
+                    "by-name" => marks.push_str(" (by name only)"),
+                    side => marks.push_str(&format!(" (declared by {side} only)")),
                 }
                 marks.push_str(&declared_as(edge.as_declared.as_deref()));
                 if edge.site_unverified {
                     marks.push_str(" (site unverified)");
                 }
+                marks.push_str(observed_mark(
+                    &edge.declared_by,
+                    edge.observed,
+                    edge.missing,
+                    out.observed_file,
+                ));
                 text.push_str(&format!(
                     "{}{} {} {} {}{}\n",
                     "  ".repeat(edge.depth as usize),
@@ -417,6 +423,13 @@ fn human(payload: &Payload) -> String {
             } else {
                 "index current\n".to_string()
             };
+            if let Some(observed) = &report.observed {
+                text.push_str(&format!("observed edges: {}", observed.rows));
+                if let Some(date) = &observed.generated_at {
+                    text.push_str(&format!(" (generated {date})"));
+                }
+                text.push('\n');
+            }
             for warning in &report.warnings {
                 text.push_str(&format!("warning: {warning}\n"));
             }
@@ -434,6 +447,38 @@ fn human(payload: &Payload) -> String {
             text
         }
     }
+}
+
+// `(declared, never observed)` needs the file to be there to mean anything, and
+// says nothing about an edge no traffic could ever back: one pointing at a repo
+// that is not in the quarry, or a by-name lead that is not an edge at all.
+fn observed_mark(
+    declared_by: &str,
+    observed: bool,
+    missing: bool,
+    file_present: bool,
+) -> &'static str {
+    if declared_by == "observed" {
+        return " (observed, undeclared)";
+    }
+    if file_present && !observed && !missing && declared_by != "by-name" {
+        return " (declared, never observed)";
+    }
+    ""
+}
+
+fn edge_marks(edge: &Edge, file_present: bool) -> String {
+    let mut marks = declared_as(edge.as_declared.as_deref());
+    if edge.site_unverified {
+        marks.push_str(" (site unverified)");
+    }
+    marks.push_str(observed_mark(
+        &edge.declared_by,
+        edge.observed,
+        edge.missing,
+        file_present,
+    ));
+    marks
 }
 
 fn declared_as(as_declared: Option<&str>) -> String {
@@ -513,6 +558,22 @@ mod tests {
             !text.contains("ghost (ingest-api/09-interfaces.md);"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn s16_observed_marks_depend_on_the_file_being_present() {
+        assert_eq!(
+            observed_mark("observed", true, false, true),
+            " (observed, undeclared)"
+        );
+        assert_eq!(
+            observed_mark("both", false, false, true),
+            " (declared, never observed)"
+        );
+        assert_eq!(observed_mark("both", false, false, false), "");
+        assert_eq!(observed_mark("both", true, false, true), "");
+        assert_eq!(observed_mark("producer", false, true, true), "");
+        assert_eq!(observed_mark("by-name", false, false, true), "");
     }
 
     #[test]

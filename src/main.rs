@@ -11,6 +11,7 @@ mod gitcmd;
 mod identity;
 mod importer;
 mod index;
+mod observed;
 mod output;
 mod query;
 

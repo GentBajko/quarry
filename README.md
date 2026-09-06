@@ -257,6 +257,62 @@ and never an edge. `docs deps --downstream` then appends repos whose
 interfaces page mentions the name, marked `(by name only)`. Treat that
 list as a lead and confirm it before acting on it.
 
+### Observed edges
+
+Declared edges are what the model wrote down. Traffic is what happened.
+An optional `observed-edges.json` at the docs repo root brings the two
+together:
+
+```json
+{
+  "generated_at": "2026-09-05",
+  "edges": [
+    {"from": "record-store", "to": "report-builder", "kind": "http", "name": "GET /records", "last_seen": "2026-09-05"}
+  ]
+}
+```
+
+One row per caller, callee and route. `from` and `to` are repo names, or
+any `known_as` alias a repo declares, and resolve the same way declared
+edges do; a name nothing resolves is a warning in `quarry docs index` and
+the row is skipped. `kind` is lowercased and, with `name`, forms the edge
+key: a row whose `kind` or `name` differs from the page's becomes an edge
+of its own, so `rest` where the page says `http` costs you a second edge.
+`last_seen` and `generated_at` are optional; when a route appears twice
+the later `last_seen` wins.
+
+Who writes the file is up to you: a gateway log job, a service mesh
+export, an OpenTelemetry query. quarry only reads it. Commit it to the
+docs repo like any other page; `sync` discards untracked files in the
+clone, and the index rebuilds when the docs repo's `HEAD` moves.
+
+With the file present, `deps` and `show` say which edges traffic backs
+up:
+
+```text
+$ quarry docs deps record-store --downstream
+record-store
+  http GET /records -> report-builder
+  http GET /health -> monitor (observed, undeclared)
+  grpc Lookup -> search-api (declared, never observed)
+3 repos, depth 1
+```
+
+An edge no page declares is indexed with `declared_by: observed` and
+walked like any other. `--json` adds `observed: true|false` on every
+edge and `last_seen` where traffic carried a date, plus `observed_file`
+on the result, so a consumer can tell "never observed" from "no file".
+`quarry docs index` reports `observed edges: 12 (generated 2026-09-05)`
+while the file exists. A file that does not parse costs one warning; the
+index still builds.
+
+This is the one way an empty `deps` result becomes evidence rather than
+absence. It still cannot see a consumer that was never registered, so
+the coverage job in
+[`templates/quarry-audit.yml`](templates/quarry-audit.yml) compares
+`gh repo list` with the folders in the docs repo once a night and prints
+the repos with no folder.
+
 ## Commands
 
 **In a source repo**
@@ -274,12 +330,12 @@ list as a lead and confirm it before acting on it.
 | Command | What it answers |
 | --- | --- |
 | `quarry docs list [<repo>]` | Every repo with its page and edge counts, or one repo's files. `--json` adds each repo's `known_as` list |
-| `quarry docs show <repo>` | Stamps, aliases, both edge directions, publications with unknown consumers, and the repo's overview section |
+| `quarry docs show <repo>` | Stamps, aliases, both edge directions, publications with unknown consumers, and the repo's overview section. Edge lines carry the same observed marks as `deps` |
 | `quarry docs section <repo> "<heading>"` | One section by heading. Exact match first, then prefix; an ambiguous heading lists the candidates and exits 1 |
 | `quarry docs search "<term>" [--repo] [--limit]` | Full-text hits by repo, file and heading |
-| `quarry docs deps <repo> --downstream\|--upstream [--depth N]` | The edge walk. `--depth 0` is unlimited; cycles are marked once and not expanded. Publications add possible consumers `(by name only)` |
+| `quarry docs deps <repo> --downstream\|--upstream [--depth N]` | The edge walk. `--depth 0` is unlimited; cycles are marked once and not expanded. Publications add possible consumers `(by name only)`; with `observed-edges.json` present, edges are marked `(observed, undeclared)` or `(declared, never observed)` |
 | `quarry docs path <a> <b>` | The shortest chain of edges, falling back to the reverse direction |
-| `quarry docs index [--force]` | Rebuild the local index without touching the network, listing every edge target that resolved to nothing |
+| `quarry docs index [--force]` | Rebuild the local index without touching the network, listing every edge target that resolved to nothing and, when `observed-edges.json` is there, the `observed edges:` count and its generation date |
 
 Every command takes `--json` and prints exactly one JSON document,
 including on failure. Add `--verbose` to see each git command on stderr.
@@ -363,6 +419,7 @@ regenerated on every write:
 ```text
 docs-quarry/
   00-index.md
+  observed-edges.json  optional, written by your traffic exporter (see Observed edges)
   ingest-api/
     .quarry-stamp        the imported commit, origin, and any edges whose site was not in the tree
     00-index.md, 01-architecture.md, …, 09-interfaces.md, logic/

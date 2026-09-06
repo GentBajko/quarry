@@ -303,7 +303,7 @@ fn table_entry(
     })
 }
 
-fn string_field(map: &Map<String, Value>, key: &str) -> Option<String> {
+pub(crate) fn string_field(map: &Map<String, Value>, key: &str) -> Option<String> {
     match map.get(key) {
         Some(Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
         Some(Value::Number(n)) => Some(n.to_string()),

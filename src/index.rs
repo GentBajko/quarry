@@ -11,6 +11,7 @@ use crate::context::Context;
 use crate::docsrepo;
 use crate::errors::{QuarryError, Result};
 use crate::frontmatter;
+use crate::observed;
 
 pub(crate) const SCHEMA_VERSION: i64 = 2;
 
@@ -32,6 +33,8 @@ struct EdgeSides {
     by_consumer: bool,
     via: BTreeSet<String>,
     declared_as: BTreeSet<String>,
+    observed: bool,
+    last_seen: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -82,11 +85,13 @@ CREATE TABLE edges (
   to_repo TEXT NOT NULL,
   kind TEXT NOT NULL,
   name TEXT NOT NULL,
-  declared_by TEXT NOT NULL CHECK (declared_by IN ('producer','consumer','both')),
+  declared_by TEXT NOT NULL CHECK (declared_by IN ('producer','consumer','both','observed')),
   via TEXT NOT NULL,
   missing INTEGER NOT NULL DEFAULT 0,
   site_unverified INTEGER NOT NULL DEFAULT 0,
   as_declared TEXT,
+  observed INTEGER NOT NULL DEFAULT 0,
+  last_seen TEXT,
   PRIMARY KEY (from_repo, to_repo, kind, name)
 );
 CREATE INDEX edges_to ON edges (to_repo);
@@ -128,6 +133,9 @@ pub(crate) struct Edge {
     pub(crate) site_unverified: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) as_declared: Option<String>,
+    pub(crate) observed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) last_seen: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -148,6 +156,13 @@ pub(crate) struct RepoScan {
     pub(crate) known_as: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct ObservedMeta {
+    pub(crate) rows: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) generated_at: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub(crate) struct RebuildReport {
     pub(crate) repos: u32,
@@ -156,6 +171,8 @@ pub(crate) struct RebuildReport {
     pub(crate) warnings: Vec<String>,
     pub(crate) rebuilt: bool,
     pub(crate) unresolved: Vec<Unresolved>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) observed: Option<ObservedMeta>,
 }
 
 pub(crate) struct Index {
@@ -163,6 +180,7 @@ pub(crate) struct Index {
     pub(crate) built_at_commit: String,
     pub(crate) synced_at: Option<String>,
     pub(crate) report: RebuildReport,
+    pub(crate) observed: Option<ObservedMeta>,
 }
 
 pub(crate) fn open_current(ctx: &Context) -> Result<Index> {
@@ -179,12 +197,24 @@ pub(crate) fn open_with(ctx: &Context, force: bool) -> Result<Index> {
     }
     let connection = Connection::open(&path)?;
     let synced_at = read_meta(&connection, "synced_at")?;
+    let observed = observed_meta(&connection)?;
     Ok(Index {
         connection,
         built_at_commit: head,
         synced_at,
         report,
+        observed,
     })
+}
+
+fn observed_meta(connection: &Connection) -> Result<Option<ObservedMeta>> {
+    let Some(rows) = read_meta(connection, "observed_edges")? else {
+        return Ok(None);
+    };
+    Ok(Some(ObservedMeta {
+        rows: rows.parse().unwrap_or(0),
+        generated_at: read_meta(connection, "observed_generated_at")?,
+    }))
 }
 
 fn is_current(path: &Path, head: &str) -> bool {
@@ -395,11 +425,49 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                 entry.declared_as.insert(declaration.other);
             }
         }
+        let observed_file = observed::read(clone);
+        let mut observed_rows: u32 = 0;
+        if let Some(file) = &observed_file {
+            report.warnings.extend(file.warnings.iter().cloned());
+            for row in &file.edges {
+                let from = resolve_name(&registry, &row.from);
+                let to = resolve_name(&registry, &row.to);
+                let (Some(from), Some(to)) = (from, to) else {
+                    let missed = if resolve_name(&registry, &row.from).is_none() {
+                        &row.from
+                    } else {
+                        &row.to
+                    };
+                    let nearest = nearest_names(&registry, missed);
+                    let hint = if nearest.is_empty() {
+                        String::new()
+                    } else {
+                        format!("; nearest: {}", nearest.join(", "))
+                    };
+                    report.warnings.push(format!(
+                        "{}: {} -> {} {} {}: {missed} is not in the quarry; row skipped{hint}",
+                        observed::OBSERVED_FILE,
+                        row.from,
+                        row.to,
+                        row.kind,
+                        row.name
+                    ));
+                    continue;
+                };
+                let entry = merged
+                    .entry((from, to, row.kind.clone(), row.name.clone()))
+                    .or_default();
+                entry.observed = true;
+                entry.last_seen = observed::latest(entry.last_seen.take(), &row.last_seen);
+                observed_rows += 1;
+            }
+        }
         for ((from, to, kind, name), sides) in merged {
             let declared_by = match (sides.by_producer, sides.by_consumer) {
                 (true, true) => "both",
                 (true, false) => "producer",
-                _ => "consumer",
+                (false, true) => "consumer",
+                (false, false) => "observed",
             };
             let missing = !names.contains(&from) || !names.contains(&to);
             let key = format!("{kind} {name}");
@@ -419,8 +487,8 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
                 )
             };
             transaction.execute(
-                "INSERT OR REPLACE INTO edges (from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                rusqlite::params![from, to, kind, name, declared_by, via_json, missing as i64, site_unverified as i64, as_declared],
+                "INSERT OR REPLACE INTO edges (from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, observed, last_seen) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                rusqlite::params![from, to, kind, name, declared_by, via_json, missing as i64, site_unverified as i64, as_declared, sides.observed as i64, sides.last_seen],
             )?;
             report.edges += 1;
         }
@@ -457,6 +525,22 @@ pub(crate) fn rebuild(ctx: &Context, clone: &Path, head: &str) -> Result<Rebuild
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
             [SCHEMA_VERSION.to_string()],
         )?;
+        if let Some(file) = &observed_file {
+            transaction.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('observed_edges', ?1)",
+                [observed_rows.to_string()],
+            )?;
+            if let Some(date) = &file.generated_at {
+                transaction.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('observed_generated_at', ?1)",
+                    [date],
+                )?;
+            }
+            report.observed = Some(ObservedMeta {
+                rows: observed_rows,
+                generated_at: file.generated_at.clone(),
+            });
+        }
         if let Some(synced) = previous_sync {
             transaction.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES ('synced_at', ?1)",
@@ -696,9 +780,9 @@ impl Index {
 
     pub(crate) fn edges(&self, repo: &str, downstream: bool) -> Result<Vec<Edge>> {
         let sql = if downstream {
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared FROM edges WHERE from_repo = ?1 ORDER BY to_repo, kind, name"
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, observed, last_seen FROM edges WHERE from_repo = ?1 ORDER BY to_repo, kind, name"
         } else {
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared FROM edges WHERE to_repo = ?1 ORDER BY from_repo, kind, name"
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, observed, last_seen FROM edges WHERE to_repo = ?1 ORDER BY from_repo, kind, name"
         };
         let mut statement = self.connection.prepare(sql)?;
         let rows = statement.query_map([repo], row_to_edge)?;
@@ -707,7 +791,7 @@ impl Index {
 
     pub(crate) fn edges_touching(&self, repo: &str) -> Result<Vec<Edge>> {
         let mut statement = self.connection.prepare(
-            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared FROM edges WHERE from_repo = ?1 OR to_repo = ?1 ORDER BY from_repo, to_repo, kind, name",
+            "SELECT from_repo, to_repo, kind, name, declared_by, via, missing, site_unverified, as_declared, observed, last_seen FROM edges WHERE from_repo = ?1 OR to_repo = ?1 ORDER BY from_repo, to_repo, kind, name",
         )?;
         let rows = statement.query_map([repo], row_to_edge)?;
         Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
@@ -746,6 +830,8 @@ fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<Edge> {
         missing: row.get::<_, i64>(6)? != 0,
         site_unverified: row.get::<_, i64>(7)? != 0,
         as_declared: row.get(8)?,
+        observed: row.get::<_, i64>(9)? != 0,
+        last_seen: row.get(10)?,
     })
 }
 

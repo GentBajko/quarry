@@ -1,0 +1,55 @@
+# Nightly audit for the DOCS repo. Copy into its .github/workflows/.
+# Job 1 enforces the committer-folder rule the reusable update workflow
+# relies on: every commit in the window touches only the folder named
+# after its committer, plus 00-index.md and observed-edges.json at the
+# root (and .github/, where this file lives). Job 2 lists organisation
+# repos with no folder here: the unregistered consumer neither Capstone
+# nor quarry can see.
+name: quarry-audit
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      since:
+        description: git log --since window for the committer audit
+        required: false
+        type: string
+        default: 24 hours ago
+jobs:
+  # committer-folders: added by the credentials and rollout fix.
+
+  unregistered-repos:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mint an org-read token
+        id: token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.QUARRY_APP_ID }}
+          private-key: ${{ secrets.QUARRY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-metadata: read
+      - name: Repos with no folder here
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          OWNER: ${{ github.repository_owner }}
+          SELF: ${{ github.event.repository.name }}
+        run: |
+          gh repo list "$OWNER" --limit 1000 --no-archived --json name -q '.[].name' \
+            | sort > "$RUNNER_TEMP/repos.txt"
+          for d in */; do
+            [ -f "$d/00-index.md" ] && printf '%s\n' "${d%/}"
+          done | sort > "$RUNNER_TEMP/folders.txt"
+          comm -23 "$RUNNER_TEMP/repos.txt" "$RUNNER_TEMP/folders.txt" \
+            | grep -v -x "$SELF" > "$RUNNER_TEMP/missing.txt" || true
+          if [ -s "$RUNNER_TEMP/missing.txt" ]; then
+            echo "repos in $OWNER with no folder in the docs repo:"
+            cat "$RUNNER_TEMP/missing.txt"
+            { echo "## quarry audit: repos with no folder"; echo; sed 's/^/- /' "$RUNNER_TEMP/missing.txt"; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "every repo in $OWNER has a folder"
+          fi

@@ -307,6 +307,7 @@ pub(crate) fn remove(ctx: &Context) -> Result<Response> {
         index
             .edges_touching(&identity.name)?
             .into_iter()
+            .filter(|edge| edge.declared_by != "observed")
             .flat_map(|edge| {
                 [edge.from_repo, edge.to_repo]
                     .into_iter()
@@ -373,6 +374,7 @@ pub(crate) fn docs_index(ctx: &Context, force: bool) -> Result<Response> {
     let mut report = opened.report.clone();
     if !report.rebuilt {
         report.repos = opened.repos()?.len() as u32;
+        report.observed = opened.observed.clone();
     }
     Ok(Response {
         meta: meta_of(&opened),

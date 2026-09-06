@@ -185,6 +185,40 @@ impl World {
     pub fn remote_stamp(&self, repo: &str) -> String {
         self.remote_file(&format!("{repo}/.quarry-stamp"))
     }
+
+    /// Commits one file at the docs repo root through a second clone and pushes
+    /// it, the way a traffic exporter would; call `sync` afterwards.
+    pub fn push_docs_root_file(&self, name: &str, body: &str) {
+        let clone = self.docs_clone(&format!("writer-{}", rand_suffix()));
+        std::fs::write(clone.join(name), body).expect("write root file");
+        self.git(&clone, &["add", "-A"]);
+        self.git(
+            &clone,
+            &["commit", "--quiet", "-m", &format!("export {name}")],
+        );
+        let pushed = self.git(&clone, &["push", "--quiet", "origin", "HEAD:main"]);
+        assert!(pushed.status.success(), "{}", stderr(&pushed));
+    }
+}
+
+/// An observed-edges.json body; each row is (from, to, kind, name, last_seen).
+/// An empty `generated_at` or `last_seen` leaves the key out.
+pub fn observed_file(generated_at: &str, rows: &[(&str, &str, &str, &str, &str)]) -> String {
+    let edges: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|(from, to, kind, name, seen)| {
+            let mut row = serde_json::json!({"from": from, "to": to, "kind": kind, "name": name});
+            if !seen.is_empty() {
+                row["last_seen"] = serde_json::json!(seen);
+            }
+            row
+        })
+        .collect();
+    let mut file = serde_json::json!({ "edges": edges });
+    if !generated_at.is_empty() {
+        file["generated_at"] = serde_json::json!(generated_at);
+    }
+    file.to_string()
 }
 
 fn rand_suffix() -> String {

@@ -38,6 +38,7 @@ pub(crate) struct RepoShow {
     pub(crate) consumes: Vec<Edge>,
     pub(crate) overview: Option<SectionHit>,
     pub(crate) publications: Vec<Publication>,
+    pub(crate) observed_file: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -54,6 +55,9 @@ pub(crate) struct DepEdge {
     pub(crate) by_name: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) as_declared: Option<String>,
+    pub(crate) observed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) last_seen: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,6 +68,7 @@ pub(crate) struct DepsResult {
     pub(crate) repos: usize,
     pub(crate) max_depth: u32,
     pub(crate) truncated: bool,
+    pub(crate) observed_file: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -105,6 +110,7 @@ pub(crate) fn show(index: &Index, repo: &str) -> Result<RepoShow> {
         consumes,
         overview,
         publications,
+        observed_file: index.observed.is_some(),
     })
 }
 
@@ -294,6 +300,8 @@ pub(crate) fn deps(
                 site_unverified: edge.site_unverified,
                 by_name: false,
                 as_declared: edge.as_declared.clone(),
+                observed: edge.observed,
+                last_seen: edge.last_seen.clone(),
             });
             max_depth = max_depth.max(at + 1);
             if !cycle && !edge.missing {
@@ -327,6 +335,8 @@ pub(crate) fn deps(
                     site_unverified: false,
                     by_name: true,
                     as_declared: None,
+                    observed: false,
+                    last_seen: None,
                 });
                 max_depth = max_depth.max(at + 1);
             }
@@ -349,6 +359,7 @@ pub(crate) fn deps(
         repos,
         max_depth,
         truncated,
+        observed_file: index.observed.is_some(),
     })
 }
 
