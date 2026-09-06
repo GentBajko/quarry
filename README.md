@@ -180,13 +180,15 @@ workflow being called. Create a GitHub App with `contents: write`, install
 it on the organisation, and store its id and private key as organisation
 secrets; every job mints a token scoped to the docs repo and valid for an
 hour, so nothing long-lived sits in any repo. Its `quarry-version` input
-pins the installer to a release tag and defaults to `v0.1.0`, so two
-hundred callers do not all move the day a release ships. The workflow runs
-`quarry init` with no `--url`, so link each repo once locally and commit its
-`.quarry/.config`; init is then a no-op. The token reaches git through an
-`insteadOf` rule on the runner rather than through the URL, so the committed
-config keeps its plain URL, ssh or https. Both rewrites are anchored on the
-`.git` suffix, so link the docs repo with it:
+pins the installer to a release tag and defaults to `v0.2.0`, so two
+hundred callers do not all move the day a release ships. The tag it names
+has to be a published release with the installer assets attached; cut the
+release before the workflow reaches the docs repo's default branch. The
+workflow runs `quarry init` with no `--url`, so link each repo once locally
+and commit its `.quarry/.config`; init is then a no-op. The token reaches
+git through an `insteadOf` rule on the runner rather than through the URL,
+so the committed config keeps its plain URL, ssh or https. Both rewrites
+are anchored on the `.git` suffix, so link the docs repo with it:
 `quarry init --url https://github.com/acme/docs-quarry` also works locally,
 but that spelling matches neither rewrite and the CI push then goes out
 with no token.
@@ -458,10 +460,9 @@ repo stays a function of what actually shipped, and branch previews live
 in the source repo where you already have them.
 
 **The imported commit is stamped, with the origin and the docs folder it
-came from.** Re-importing the same commit does
-nothing; an older commit is skipped; a diverged history is refused until
-`--force`. On a shallow CI checkout quarry fetches the stamp commit rather
-than guessing.
+came from.** Re-importing the same commit does nothing; an older commit is
+skipped; a diverged history is refused until `--force`. On a shallow CI
+checkout quarry fetches the stamp commit rather than guessing.
 
 **Two writers never corrupt the docs repo.** A person and a CI job racing
 on the same repo both end at the newer commit. A rejected push discards
@@ -494,9 +495,9 @@ What that buys you is one repo reaching for another repo's contract
 **before writing code**. [Capstone](https://github.com/GentBajko/capstone)'s `groom` and `plan` call
 `quarry docs deps` and `quarry docs section` when a feature touches paths
 covered by `09-interfaces.md` — by workspace name in a monorepo, which is
-the target name here. The constraint lands in the plan as a
-citation, rather than in code review a week later. Set
-`cross_repo: "off"` in `capstone.json` if you'd rather it didn't.
+the target name here. The constraint lands in the plan as a citation,
+rather than in code review a week later. Set `cross_repo: "off"` in
+`capstone.json` if you'd rather it didn't.
 
 The other direction is `quarry check`: Capstone 6.2 writes a payload table
 under every Produces and Consumes row, and the producer's CI compares its

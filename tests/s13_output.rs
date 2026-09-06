@@ -48,7 +48,7 @@ fn s13_version_exits_zero() {
     let w = world();
     let out = w.run(&["--version"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
-    assert!(stdout(&out).contains("quarry 0.1.0"), "{}", stdout(&out));
+    assert!(stdout(&out).contains("quarry 0.2.0"), "{}", stdout(&out));
 }
 
 #[test]

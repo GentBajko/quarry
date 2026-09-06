@@ -38,7 +38,7 @@ on:
         description: Release tag of the quarry binary to install
         required: false
         type: string
-        default: v0.1.0
+        default: v0.2.0
       strict:
         description: Refuse the import on an unverifiable site or a secret-shaped string
         required: false
@@ -102,6 +102,10 @@ jobs:
           TOKEN: ${{ steps.token.outputs.token }}
           DOCS: ${{ inputs.docs-repo }}
       - name: Install quarry
+        # quarry-version has to name a published release carrying
+        # quarry-installer.sh. This file defaults to v0.2.0, so cut that
+        # release before merging the workflow into the docs repo, or every
+        # caller's install step 404s.
         run: curl -LsSf https://github.com/GentBajko/quarry/releases/download/${{ inputs.quarry-version }}/quarry-installer.sh | sh
       - name: Import
         # init takes no --url. The committed .quarry/.config already carries

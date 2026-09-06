@@ -292,11 +292,11 @@ fn s19_the_update_template_takes_the_documented_inputs_and_secrets() {
     }
     assert_eq!(call["inputs"]["strict"]["default"], Value::Bool(true));
     // The pinned tag is spelled in three places: this assertion, the
-    // template's `default:`, and README's "defaults to `v0.1.0`" sentence.
-    // The version reconciliation step moves all three to v0.2.0 together.
+    // template's `default:`, and README's "defaults to `v0.2.0`" sentence.
+    // All three move together on a release.
     assert_eq!(
         call["inputs"]["quarry-version"]["default"],
-        Value::String("v0.1.0".to_string())
+        Value::String("v0.2.0".to_string())
     );
     for secret in ["app-id", "app-private-key"] {
         assert!(call["secrets"].get(secret).is_some(), "no secret {secret}");
