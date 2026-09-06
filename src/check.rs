@@ -51,6 +51,10 @@ pub(crate) struct ContractBreak {
     pub(crate) name: String,
     pub(crate) field: String,
     pub(crate) reason: String,
+    // Set whenever monorepo targets are configured; the target, not the repo,
+    // is the producer name consumers write.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) target: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -67,6 +71,10 @@ pub(crate) struct ContractOut {
     pub(crate) kind: String,
     pub(crate) name: String,
     pub(crate) consumers: Vec<ConsumerOut>,
+    // Set whenever monorepo targets are configured; the target, not the repo,
+    // is the producer name consumers write.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) target: Option<String>,
 }
 
 // Every vector is serialised even when empty: a CI consumer indexes
@@ -330,6 +338,7 @@ pub(crate) fn run(
             kind: kind.clone(),
             name: name.clone(),
             consumers: Vec::new(),
+            target: None,
         };
         for edge in edges {
             let consumer = edge.to_repo;
@@ -368,6 +377,7 @@ pub(crate) fn run(
                                     name: name.clone(),
                                     field: finding.field,
                                     reason: finding.reason,
+                                    target: None,
                                 });
                             } else {
                                 consumer_out.warnings.push(line);

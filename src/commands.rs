@@ -1,5 +1,6 @@
 //! One function per CLI verb.
 
+use std::collections::BTreeSet;
 use std::io::IsTerminal;
 use std::io::Write;
 
@@ -22,6 +23,7 @@ pub(crate) fn init(
     ctx: &Context,
     url: Option<String>,
     docs_dir: Option<String>,
+    name: Option<String>,
     branch: Option<String>,
     force: bool,
 ) -> Result<Response> {
@@ -44,9 +46,16 @@ pub(crate) fn init(
             old.url
         )));
     }
+    if let Some(wanted) = name.as_deref()
+        && ctx.identity.as_ref().is_some_and(|i| i.name == wanted)
+    {
+        return Err(QuarryError::refusal(format!(
+            "target {wanted} is this repo's own name; the umbrella folder uses it"
+        )));
+    }
     let git = ctx.repo_git();
     let derived = gitcmd::default_branch(&git);
-    let config = config::resolve(url, docs_dir, branch, existing.as_ref(), derived)?;
+    let config = config::resolve(url, docs_dir, name, branch, existing.as_ref(), derived)?;
     let default_branch = config.default_branch.clone();
     if ctx.identity.is_some() && !gitcmd::remote_branch_known(&git, &default_branch) {
         notes.push(format!(
@@ -74,11 +83,24 @@ pub(crate) fn init(
         config: Some(config.clone()),
         ..ctx.clone()
     };
-    if !linked.repo_root.join(&config.docs_dir).exists() {
-        notes.push(format!(
-            "no {} yet; run Capstone map before quarry add",
-            config.docs_dir
-        ));
+    // With targets configured the umbrella is optional, so the root folder is
+    // not worth a note; each target's own folder is.
+    if config.targets.is_empty() {
+        if !linked.repo_root.join(&config.docs_dir).exists() {
+            notes.push(format!(
+                "no {} yet; run Capstone map before quarry add",
+                config.docs_dir
+            ));
+        }
+    } else {
+        for target in &config.targets {
+            if !linked.repo_root.join(&target.docs_dir).exists() {
+                notes.push(format!(
+                    "no {} yet for target {}; run Capstone map before quarry add",
+                    target.docs_dir, target.name
+                ));
+            }
+        }
     }
     let cloned = docsrepo::ensure_clone(&linked)?;
     reindex(&linked)?;
@@ -89,6 +111,7 @@ pub(crate) fn init(
         default_branch,
         clone: linked.clone_path()?.display().to_string(),
         cloned,
+        targets: config.targets,
         notes,
     })))
 }
@@ -113,9 +136,109 @@ pub(crate) fn update(ctx: &Context, force: bool, strict: bool) -> Result<Respons
     import(ctx, false, force, strict)
 }
 
+/// One folder in the docs repo: a monorepo target, or the whole repo when no
+/// targets are configured, or the root index-of-indexes.
+struct Unit {
+    name: String,
+    docs_dir: String,
+    umbrella: bool,
+}
+
+impl Unit {
+    fn target(&self) -> config::Target {
+        config::Target {
+            name: self.name.clone(),
+            docs_dir: self.docs_dir.clone(),
+        }
+    }
+}
+
+// A hand-edited config never reaches a write: the names and dirs are validated
+// on every load, not only when `init` writes them.
+fn units(
+    config: &config::Config,
+    identity: &identity::RepoIdentity,
+    root_index_present: bool,
+) -> Result<Vec<Unit>> {
+    if config.targets.is_empty() {
+        return Ok(vec![Unit {
+            name: identity.name.clone(),
+            docs_dir: config.docs_dir.clone(),
+            umbrella: false,
+        }]);
+    }
+    config::validate_targets(&config.docs_dir, &config.targets)?;
+    let mut units = Vec::new();
+    for target in &config.targets {
+        if target.name == identity.name {
+            return Err(QuarryError::refusal(format!(
+                "target {} is this repo's own name; the umbrella folder uses it",
+                target.name
+            )));
+        }
+        units.push(Unit {
+            name: target.name.clone(),
+            docs_dir: target.docs_dir.clone(),
+            umbrella: false,
+        });
+    }
+    if root_index_present {
+        units.push(Unit {
+            name: identity.name.clone(),
+            docs_dir: config.docs_dir.clone(),
+            umbrella: true,
+        });
+    }
+    Ok(units)
+}
+
+fn umbrella_of<'a>(unit: &Unit, config: &'a config::Config) -> &'a [config::Target] {
+    if unit.umbrella { &config.targets } else { &[] }
+}
+
+// The umbrella page's links are rewritten from the configured target list, so
+// registering a target changes its content even when the source commit has not
+// moved. The folders in the clone stamped with this repo's origin are what the
+// last import saw; a difference means the links are behind the config.
+fn umbrella_is_stale(
+    ctx: &Context,
+    config: &config::Config,
+    identity: &identity::RepoIdentity,
+) -> Result<bool> {
+    if config.targets.is_empty() {
+        return Ok(false);
+    }
+    let clone = ctx.clone_path()?;
+    let mut imported: BTreeSet<String> = BTreeSet::new();
+    for dir in docsrepo::read_repo_dirs(&clone)? {
+        let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name == identity.name {
+            continue;
+        }
+        let origin = docsrepo::read_stamp(ctx, name)?.and_then(|stamp| stamp.origin);
+        if origin.is_some_and(|origin| origin == identity.origin) {
+            imported.insert(name.to_string());
+        }
+    }
+    let configured: BTreeSet<String> = config.targets.iter().map(|t| t.name.clone()).collect();
+    Ok(imported != configured)
+}
+
 fn import(ctx: &Context, adding: bool, force: bool, strict: bool) -> Result<Response> {
     let config = ctx.config()?.clone();
     let identity = ctx.identity()?.clone();
+    let root_index_present = ctx
+        .repo_root
+        .join(&config.docs_dir)
+        .join("00-index.md")
+        .exists();
+    let units = units(&config, &identity, root_index_present)?;
+    // The payload shape follows the configuration, not the unit count: a repo
+    // with one target and no umbrella still answers with an array, so a CI
+    // consumer reading `.result[0]` keeps working when a workspace is added.
+    let per_target = !config.targets.is_empty();
     ctx.require_clone()?;
     let git = ctx.repo_git();
     let head = git.rev_parse("HEAD")?;
@@ -129,89 +252,160 @@ fn import(ctx: &Context, adding: bool, force: bool, strict: bool) -> Result<Resp
         )));
     }
 
-    let mut notes = Vec::new();
+    // The discarded note describes the shared clone, so every unit carries it.
+    let mut shared_notes = Vec::new();
     let discarded = docsrepo::refresh(ctx)?;
     if discarded.commits > 0 || discarded.dirty {
-        notes.push(format!(
+        shared_notes.push(format!(
             "discarded {} local commits / changes in the docs clone",
             discarded.commits
         ));
     }
     stamp_sync(ctx)?;
 
-    let folder_existed = ctx.clone_path()?.join(&identity.name).exists();
-    if !adding && !folder_existed {
-        return Err(QuarryError::refusal(format!(
-            "{} is not in the docs repo; run quarry add",
-            identity.name
-        )));
-    }
-    if adding && folder_existed {
-        notes.push(format!("{} is already in the docs repo", identity.name));
-    }
-    if adding && !folder_existed {
-        let index_page = ctx.repo_root.join(&config.docs_dir).join("00-index.md");
-        if !index_page.exists() {
+    let clone = ctx.clone_path()?;
+    let mut existed = Vec::with_capacity(units.len());
+    let mut outs: Vec<WriteOut> = Vec::with_capacity(units.len());
+    for unit in &units {
+        let folder_existed = clone.join(&unit.name).exists();
+        if !adding && !folder_existed {
             return Err(QuarryError::refusal(format!(
-                "no 00-index.md in {}; run Capstone map first",
-                config.docs_dir
+                "{} is not in the docs repo; run quarry add",
+                unit.name
             )));
         }
-    }
-
-    let outcome = plan(ctx, &identity, &head, force)?;
-    let from = outcome.stamp.clone();
-    if let Some(reason) = outcome.skip {
-        return Ok(Response::bare(Payload::Write(WriteOut {
-            repo: identity.name,
-            from,
+        let mut notes = shared_notes.clone();
+        if adding && folder_existed {
+            notes.push(format!("{} is already in the docs repo", unit.name));
+        }
+        if adding && !folder_existed {
+            let index_page = ctx.repo_root.join(&unit.docs_dir).join("00-index.md");
+            if !index_page.exists() {
+                return Err(QuarryError::refusal(format!(
+                    "no 00-index.md in {}; run Capstone map first",
+                    unit.docs_dir
+                )));
+            }
+        }
+        existed.push(folder_existed);
+        outs.push(WriteOut {
+            repo: unit.name.clone(),
+            from: None,
             to: short(&head),
             files: 0,
-            result: reason,
+            result: String::new(),
             notes,
-        })));
+        });
     }
 
-    // The build lands in a tempdir under .quarry/, so refusing here writes
-    // nothing into the docs clone.
-    let built = importer::build(ctx, &head)?;
-    if strict && !built.unverified.is_empty() {
-        return Err(QuarryError::refusal(strict_message(
-            &built.unverified,
-            &head,
-        )));
+    let mut pending: Vec<usize> = Vec::new();
+    let umbrella_stale = umbrella_is_stale(ctx, &config, &identity)?;
+    for (i, unit) in units.iter().enumerate() {
+        let outcome = plan(ctx, &unit.name, &unit.docs_dir, &identity, &head, force)?;
+        outs[i].from = outcome.stamp;
+        match outcome.skip {
+            // A stamp on the source commit says nothing about the target list
+            // the umbrella's links were rewritten from.
+            Some(reason) if unit.umbrella && umbrella_stale && reason == "current" => {
+                pending.push(i)
+            }
+            Some(reason) => outs[i].result = reason,
+            None => pending.push(i),
+        }
     }
-    notes.extend(
-        built
-            .unverified
+    if pending.is_empty() {
+        return Ok(Response::bare(payload_of(per_target, outs)));
+    }
+
+    // Every pending unit is built before any folder is written, so a refusal in
+    // the second target leaves the clone untouched.
+    let mut built = Vec::with_capacity(pending.len());
+    for &i in &pending {
+        built.push(importer::build(
+            ctx,
+            &head,
+            &units[i].target(),
+            umbrella_of(&units[i], &config),
+        )?);
+    }
+    if strict {
+        let unverified: Vec<importer::UnverifiedSite> = built
             .iter()
-            .map(|site| importer::unverified_note(site, &head)),
-    );
-    let files = built.files;
-    docsrepo::write_folder(ctx, &identity.name, built.dir.path())?;
-    std::mem::forget(built.dir);
+            .flat_map(|b| b.unverified.iter().cloned())
+            .collect();
+        if !unverified.is_empty() {
+            return Err(QuarryError::refusal(strict_message(&unverified, &head)));
+        }
+    }
+    for (n, &i) in pending.iter().enumerate() {
+        outs[i].files = built[n].files;
+        outs[i].notes.extend(
+            built[n]
+                .unverified
+                .iter()
+                .map(|site| importer::unverified_note(site, &head)),
+        );
+        docsrepo::write_folder(ctx, &units[i].name, built[n].dir.path())?;
+    }
+    for one in built {
+        std::mem::forget(one.dir);
+    }
     docsrepo::regenerate_root_index(ctx)?;
 
-    let message = format!(
-        "{} {} @{}",
-        if adding && !folder_existed {
-            "add"
-        } else {
-            "update"
-        },
-        identity.name,
-        short(&head)
-    );
-    let mut redo_result: Option<String> = None;
+    let verb = if adding && pending.iter().any(|&i| !existed[i]) {
+        "add"
+    } else {
+        "update"
+    };
+    let names: Vec<&str> = pending.iter().map(|&i| units[i].name.as_str()).collect();
+    let message = format!("{verb} {} @{}", names.join(", "), short(&head));
+    let mut redo_skips: Vec<Option<String>> = vec![None; pending.len()];
     let push = docsrepo::commit_and_push(ctx, &message, || {
-        let outcome = plan(ctx, &identity, &head, force)?;
-        if let Some(reason) = outcome.skip {
-            redo_result = Some(reason.clone());
-            return Ok(Redo::Skip(reason));
+        let mut rebuilt: Vec<(usize, importer::Built)> = Vec::new();
+        let mut first_reason: Option<String> = None;
+        // The clone was reset onto whatever the other pusher left, so the
+        // umbrella's target set is read again.
+        let umbrella_stale = umbrella_is_stale(ctx, &config, &identity)?;
+        for (n, &i) in pending.iter().enumerate() {
+            let outcome = plan(
+                ctx,
+                &units[i].name,
+                &units[i].docs_dir,
+                &identity,
+                &head,
+                force,
+            )?;
+            let forced =
+                units[i].umbrella && umbrella_stale && outcome.skip.as_deref() == Some("current");
+            if let Some(reason) = outcome.skip.filter(|_| !forced) {
+                if first_reason.is_none() {
+                    first_reason = Some(reason.clone());
+                }
+                redo_skips[n] = Some(reason);
+                continue;
+            }
+            redo_skips[n] = None;
+            rebuilt.push((
+                i,
+                importer::build(
+                    ctx,
+                    &head,
+                    &units[i].target(),
+                    umbrella_of(&units[i], &config),
+                )?,
+            ));
         }
-        let built = importer::build(ctx, &head)?;
-        docsrepo::write_folder(ctx, &identity.name, built.dir.path())?;
-        std::mem::forget(built.dir);
+        if rebuilt.is_empty() {
+            return Ok(Redo::Skip(
+                first_reason.unwrap_or_else(|| "current".to_string()),
+            ));
+        }
+        for (i, one) in &rebuilt {
+            docsrepo::write_folder(ctx, &units[*i].name, one.dir.path())?;
+        }
+        for (_, one) in rebuilt {
+            std::mem::forget(one.dir);
+        }
         docsrepo::regenerate_root_index(ctx)?;
         Ok(Redo::Rebuilt)
     })?;
@@ -220,72 +414,130 @@ fn import(ctx: &Context, adding: bool, force: bool, strict: bool) -> Result<Resp
         PushResult::Pushed => "imported".to_string(),
         PushResult::Skipped(reason) => reason,
     };
+    for (n, &i) in pending.iter().enumerate() {
+        outs[i].result = redo_skips[n].clone().unwrap_or_else(|| result.clone());
+    }
     reindex(ctx)?;
-    notes.extend(contract_notes(ctx, &identity.name)?);
-    Ok(Response::bare(Payload::Write(WriteOut {
-        repo: identity.name,
-        from,
-        to: short(&head),
-        files,
-        result,
-        notes,
-    })))
+    // One open for the whole run: the index was just rebuilt and every unit
+    // reads the same database.
+    let opened = index::open_current(ctx)?;
+    for &i in &pending {
+        let notes = contract_notes(ctx, &opened, &units[i].name)?;
+        outs[i].notes.extend(notes);
+    }
+    Ok(Response::bare(payload_of(per_target, outs)))
+}
+
+// No targets keeps today's single-object payload; targets make it an array,
+// however many folders this run touched.
+fn payload_of(per_target: bool, mut outs: Vec<WriteOut>) -> Payload {
+    if !per_target && outs.len() == 1 {
+        Payload::Write(outs.remove(0))
+    } else {
+        Payload::WriteMany(outs)
+    }
 }
 
 pub(crate) fn check(ctx: &Context) -> Result<Response> {
     let config = ctx.config()?.clone();
     let identity = ctx.identity()?.clone();
     let clone = ctx.require_clone()?;
-    let opened = index::open_current(ctx)?;
-    let page = ctx
+    let root_index_present = ctx
         .repo_root
         .join(&config.docs_dir)
-        .join(frontmatter::INTERFACES_PAGE);
-    let text = match std::fs::read_to_string(&page) {
-        Ok(text) => Some(text),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(QuarryError::from(e)),
+        .join("00-index.md")
+        .exists();
+    // The umbrella folder is an index-of-indexes; it never carries a chapter to
+    // check, so it is dropped without a note.
+    let checked: Vec<Unit> = units(&config, &identity, root_index_present)?
+        .into_iter()
+        .filter(|unit| !unit.umbrella)
+        .collect();
+    // A configured target is the producer name consumers write and the folder
+    // the docs repo holds; the repo's own name is not a folder at all when the
+    // root index is absent. So the target is named whenever targets exist, not
+    // only when there are two or more of them.
+    let per_target = !config.targets.is_empty();
+    let opened = index::open_current(ctx)?;
+    let mut merged = check::CheckOut {
+        repo: identity.name.clone(),
+        contracts: Vec::new(),
+        breaks: Vec::new(),
+        warnings: Vec::new(),
+        notes: Vec::new(),
     };
-    let mut out = check::run(&opened, &identity.name, text.as_deref(), &clone)?;
-    // An unregistered repo already carries check::run's own note; a second one
-    // about the missing chapter would add nothing. The edge filter is the same
-    // three terms check::run applies when it groups consumers.
-    if text.is_none() && opened.has_repo(&identity.name)? {
-        let has_consumers = opened.edges(&identity.name, true)?.iter().any(|edge| {
-            !edge.missing && edge.declared_by != "observed" && edge.to_repo != identity.name
-        });
-        let note = if has_consumers {
-            format!(
-                "no {}/{} in the working tree; run Capstone map first",
-                config.docs_dir,
-                frontmatter::INTERFACES_PAGE
-            )
-        } else {
-            // check::run's no-consumers note says the same thing from the
-            // other side; B3 words this case as one note.
-            let redundant = format!(
-                "no consumers of {} in the quarry; nothing to compare",
-                identity.name
-            );
-            out.notes.retain(|n| n != &redundant);
-            format!(
-                "no {} in {}; nothing to check",
-                frontmatter::INTERFACES_PAGE,
-                config.docs_dir
-            )
+    for unit in &checked {
+        let page = ctx
+            .repo_root
+            .join(&unit.docs_dir)
+            .join(frontmatter::INTERFACES_PAGE);
+        let text = match std::fs::read_to_string(&page) {
+            Ok(text) => Some(text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(QuarryError::from(e)),
         };
-        out.notes.insert(0, note);
+        if text.is_none() && per_target {
+            merged.notes.push(format!(
+                "{}: no {}/{}; nothing to check",
+                unit.name,
+                unit.docs_dir,
+                frontmatter::INTERFACES_PAGE
+            ));
+            continue;
+        }
+        let mut out = check::run(&opened, &unit.name, text.as_deref(), &clone)?;
+        // An unregistered repo already carries check::run's own note; a second
+        // one about the missing chapter would add nothing. The edge filter is
+        // the same three terms check::run applies when it groups consumers.
+        if text.is_none() && opened.has_repo(&unit.name)? {
+            let has_consumers = opened.edges(&unit.name, true)?.iter().any(|edge| {
+                !edge.missing && edge.declared_by != "observed" && edge.to_repo != unit.name
+            });
+            let note = if has_consumers {
+                format!(
+                    "no {}/{} in the working tree; run Capstone map first",
+                    unit.docs_dir,
+                    frontmatter::INTERFACES_PAGE
+                )
+            } else {
+                // check::run's no-consumers note says the same thing from the
+                // other side; B3 words this case as one note.
+                let redundant = format!(
+                    "no consumers of {} in the quarry; nothing to compare",
+                    unit.name
+                );
+                out.notes.retain(|n| n != &redundant);
+                format!(
+                    "no {} in {}; nothing to check",
+                    frontmatter::INTERFACES_PAGE,
+                    unit.docs_dir
+                )
+            };
+            out.notes.insert(0, note);
+        }
+        if per_target {
+            for contract in &mut out.contracts {
+                contract.target = Some(unit.name.clone());
+            }
+            for one in &mut out.breaks {
+                one.target = Some(unit.name.clone());
+            }
+        }
+        merged.contracts.extend(out.contracts);
+        merged.breaks.extend(out.breaks);
+        merged.warnings.extend(out.warnings);
+        merged.notes.extend(out.notes);
     }
     Ok(Response {
         meta: meta_of(&opened),
-        payload: Payload::Check(out),
+        payload: Payload::Check(merged),
     })
 }
 
 // The imported folder is in the clone by now, so this compares the pages that
 // were just written. Advisory: breaks become notes and the exit code is
 // unchanged.
-fn contract_notes(ctx: &Context, repo: &str) -> Result<Vec<String>> {
+fn contract_notes(ctx: &Context, index: &index::Index, repo: &str) -> Result<Vec<String>> {
     let clone = ctx.require_clone()?;
     let page = clone.join(repo).join(frontmatter::INTERFACES_PAGE);
     let text = match std::fs::read_to_string(&page) {
@@ -293,8 +545,7 @@ fn contract_notes(ctx: &Context, repo: &str) -> Result<Vec<String>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(QuarryError::from(e)),
     };
-    let opened = index::open_current(ctx)?;
-    let out = check::run(&opened, repo, Some(&text), &clone)?;
+    let out = check::run(index, repo, Some(&text), &clone)?;
     let mut notes: Vec<String> = out
         .breaks
         .iter()
@@ -319,21 +570,32 @@ struct Plan {
     stamp: Option<String>,
 }
 
-fn plan(ctx: &Context, identity: &identity::RepoIdentity, head: &str, force: bool) -> Result<Plan> {
-    let stamp = docsrepo::read_stamp(ctx, &identity.name)?;
+fn plan(
+    ctx: &Context,
+    folder: &str,
+    docs_dir: &str,
+    identity: &identity::RepoIdentity,
+    head: &str,
+    force: bool,
+) -> Result<Plan> {
+    let stamp = docsrepo::read_stamp(ctx, folder)?;
     let Some(stamp) = stamp else {
         return Ok(Plan {
             skip: None,
             stamp: None,
         });
     };
-    if let Some(origin) = stamp.origin.as_deref()
-        && origin != identity.origin
-    {
-        return Err(QuarryError::refusal(format!(
-            "name {} already used by {origin}",
-            identity.name
-        )));
+    // A stamp written before 0.2.0 came from the root docs dir by definition,
+    // and only the current config knows which dir that is.
+    if let Some(origin) = stamp.origin.as_deref() {
+        let root = ctx.config()?.docs_dir.clone();
+        let stamped_dir = stamp.docs_dir.as_deref().unwrap_or(&root);
+        if origin != identity.origin || config::tidy_dir(stamped_dir) != config::tidy_dir(docs_dir)
+        {
+            return Err(QuarryError::refusal(format!(
+                "name {folder} already used by {origin} at {stamped_dir}"
+            )));
+        }
     }
     let short_stamp = short(&stamp.commit);
     if stamp.commit == head {
@@ -383,49 +645,84 @@ fn plan(ctx: &Context, identity: &identity::RepoIdentity, head: &str, force: boo
 }
 
 pub(crate) fn remove(ctx: &Context) -> Result<Response> {
+    let config = ctx.config()?.clone();
     let identity = ctx.identity()?.clone();
-    ctx.require_clone()?;
+    let per_target = !config.targets.is_empty();
+    // The umbrella folder may sit in the docs repo even when the working tree
+    // has lost its root index, so removal considers it whenever the clone holds
+    // it. A repo whose root docs dir never had an index has no such folder and
+    // gets no block for one.
+    let units = units(&config, &identity, true)?;
+    let clone = ctx.require_clone()?;
     docsrepo::refresh(ctx)?;
     stamp_sync(ctx)?;
-    let dangling = {
+    let units: Vec<Unit> = units
+        .into_iter()
+        .filter(|unit| !unit.umbrella || clone.join(&unit.name).exists())
+        .collect();
+    let going: BTreeSet<String> = units.iter().map(|unit| unit.name.clone()).collect();
+    let dangling: Vec<Vec<String>> = {
         let index = index::open_current(ctx)?;
-        index
-            .edges_touching(&identity.name)?
-            .into_iter()
-            .filter(|edge| edge.declared_by != "observed")
-            .flat_map(|edge| {
-                [edge.from_repo, edge.to_repo]
+        let mut per_unit = Vec::with_capacity(units.len());
+        for unit in &units {
+            // A sibling folder this same run drops is not left dangling.
+            per_unit.push(
+                index
+                    .edges_touching(&unit.name)?
                     .into_iter()
-                    .filter(|r| *r != identity.name)
-                    .collect::<Vec<_>>()
-            })
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect::<Vec<_>>()
+                    .filter(|edge| edge.declared_by != "observed")
+                    .flat_map(|edge| [edge.from_repo, edge.to_repo])
+                    .filter(|repo| !going.contains(repo))
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            );
+        }
+        per_unit
     };
-    let removed = docsrepo::remove_folder(ctx, &identity.name)?;
-    if !removed {
-        return Ok(Response::bare(Payload::Remove(RemoveOut {
-            repo: identity.name,
-            removed: false,
-            dangling,
-        })));
+    let mut outs = Vec::with_capacity(units.len());
+    let mut removed_names: Vec<&str> = Vec::new();
+    for (i, unit) in units.iter().enumerate() {
+        let removed = docsrepo::remove_folder(ctx, &unit.name)?;
+        if removed {
+            removed_names.push(unit.name.as_str());
+        }
+        outs.push(RemoveOut {
+            repo: unit.name.clone(),
+            removed,
+            dangling: dangling[i].clone(),
+        });
+    }
+    if removed_names.is_empty() {
+        return Ok(Response::bare(remove_payload(per_target, outs)));
     }
     docsrepo::regenerate_root_index(ctx)?;
-    docsrepo::commit_and_push(ctx, &format!("remove {}", identity.name), || {
-        if !ctx.clone_path()?.join(&identity.name).exists() {
+    let message = format!("remove {}", removed_names.join(", "));
+    docsrepo::commit_and_push(ctx, &message, || {
+        let clone = ctx.clone_path()?;
+        let mut again = false;
+        for unit in &units {
+            if clone.join(&unit.name).exists() {
+                docsrepo::remove_folder(ctx, &unit.name)?;
+                again = true;
+            }
+        }
+        if !again {
             return Ok(Redo::Skip("removed".to_string()));
         }
-        docsrepo::remove_folder(ctx, &identity.name)?;
         docsrepo::regenerate_root_index(ctx)?;
         Ok(Redo::Rebuilt)
     })?;
     reindex(ctx)?;
-    Ok(Response::bare(Payload::Remove(RemoveOut {
-        repo: identity.name,
-        removed: true,
-        dangling,
-    })))
+    Ok(Response::bare(remove_payload(per_target, outs)))
+}
+
+fn remove_payload(per_target: bool, mut outs: Vec<RemoveOut>) -> Payload {
+    if !per_target && outs.len() == 1 {
+        Payload::Remove(outs.remove(0))
+    } else {
+        Payload::RemoveMany(outs)
+    }
 }
 
 pub(crate) fn sync(ctx: &Context) -> Result<Response> {

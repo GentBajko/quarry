@@ -52,7 +52,9 @@ fn s18_a_tracked_site_leaves_the_stamp_unchanged() {
     );
     assert_eq!(
         w.remote_stamp("ingest-api"),
-        format!("{{\"commit\":\"{head}\",\"origin\":\"localhost/remotes/ingest-api\"}}\n")
+        format!(
+            "{{\"commit\":\"{head}\",\"origin\":\"localhost/remotes/ingest-api\",\"docs_dir\":\"docs/capstone\"}}\n"
+        )
     );
 }
 

@@ -381,7 +381,7 @@ notes without changing its exit code.
 
 | Command | What it does |
 | --- | --- |
-| `quarry init [--url] [--docs-dir] [--default-branch] [--force]` | Link this repo to a docs repo, write `.quarry/`, clone it shallowly. `--force` relinks to a different docs repo |
+| `quarry init [--url] [--docs-dir] [--default-branch] [--name] [--force]` | Link this repo to a docs repo, write `.quarry/`, clone it shallowly. `--name <target> --docs-dir <dir>` registers one monorepo target, one call per target. `--force` relinks to a different docs repo |
 | `quarry add [--strict]` | Register this repo in the docs repo and import its docs. Running it twice is a no-op. `--strict` refuses when a declared site is not in the tree |
 | `quarry update [--force] [--strict]` | Copy the docs at `HEAD` into the docs repo, commit, push. `--force` imports over a diverged or unreachable stamp; `--strict` refuses when a declared site is not in the tree |
 | `quarry sync` | Pull the docs repo clone, then rebuild the index |
@@ -409,7 +409,8 @@ including on failure. Add `--verbose` to see each git command on stderr.
 repo stays a function of what actually shipped, and branch previews live
 in the source repo where you already have them.
 
-**The imported commit is stamped.** Re-importing the same commit does
+**The imported commit is stamped, with the origin and the docs folder it
+came from.** Re-importing the same commit does
 nothing; an older commit is skipped; a diverged history is refused until
 `--force`. On a shallow CI checkout quarry fetches the stamp commit rather
 than guessing.
@@ -444,7 +445,8 @@ import is deterministic enough for two machines to race on it.
 What that buys you is one repo reaching for another repo's contract
 **before writing code**. [Capstone](https://github.com/GentBajko/capstone)'s `groom` and `plan` call
 `quarry docs deps` and `quarry docs section` when a feature touches paths
-covered by `09-interfaces.md`. The constraint lands in the plan as a
+covered by `09-interfaces.md` — by workspace name in a monorepo, which is
+the target name here. The constraint lands in the plan as a
 citation, rather than in code review a week later. Set
 `cross_repo: "off"` in `capstone.json` if you'd rather it didn't.
 
@@ -488,7 +490,7 @@ docs-quarry/
   00-index.md
   observed-edges.json  optional, written by your traffic exporter (see Observed edges)
   ingest-api/
-    .quarry-stamp        the imported commit, origin, and any edges whose site was not in the tree
+    .quarry-stamp        the imported commit, origin, docs folder, and any edges whose site was not in the tree
     00-index.md, 01-architecture.md, …, 09-interfaces.md, logic/
   record-store/
   …
@@ -512,9 +514,12 @@ unless `.quarry/.config` carries a `permalink_template` with `{owner}`,
   "default_branch": "main",
   "docs_dir": "docs/capstone",
   "permalink_template": null,
+  "targets": [{"name": "billing", "docs_dir": "services/billing/docs/capstone"}],
   "url": "git@github.com:acme/docs-quarry.git"
 }
 ```
+
+`targets` is absent until `init --name` writes it.
 
 `QUARRY_DOCS_REPO`, `QUARRY_DOCS_DIR` and `QUARRY_DEFAULT_BRANCH` stand in
 for `--url`, `--docs-dir` and `--default-branch` when there is no config
@@ -529,10 +534,47 @@ your repo uses something else; a stored value survives every later `init`,
 including the one your CI runs on every job.
 
 The repo's name in the docs repo is the last path segment of its `origin`
-URL and is not configurable. Two repos from different owners claiming one
-name is refused, on the strength of the origin recorded in the stamp.
-Other names a repo answers to go in a `known_as` list in its own pages;
-they are resolved at index time and never change the folder name.
+URL and is not configurable; a monorepo target's folder is its target
+name. Two folders claiming one name are refused, on the strength of the
+origin and docs folder recorded in the stamp. Other names a repo answers
+to go in a `known_as` list in its own pages; they are resolved at index
+time and never change the folder name.
+
+</details>
+
+<details>
+<summary>Monorepos</summary>
+
+One repository can hold several documented workspaces. Register each one
+once:
+
+```sh
+quarry init --url git@github.com:acme/docs-quarry.git \
+  --name billing --docs-dir services/billing/docs/capstone
+quarry init --name orders --docs-dir services/orders/docs/capstone
+```
+
+`add`, `update`, `remove` and `check` then walk every target. Each lands
+as its own folder in the docs repo, named after the target, with its own
+stamp; edges between two targets of one repo are ordinary edges. When the
+root `docs_dir` holds a `00-index.md` (Capstone's index-of-indexes), it is
+imported too, under the repo's own name, with every link into a target's
+docs folder rewritten to `../<target>/…`. Registering a target rewrites
+those links on the next run, without waiting for a new source commit. One
+`update` is one commit (`update billing, orders, acme-app @4f1c9a2`); with
+targets configured, `--json add`, `update` and `remove` return an array
+with one block per folder they touched, `--json check` names the producing
+target on every contract and break row, and `--json init` lists the
+registered `targets`. Capstone names its workspaces the same way, so
+`groom` and `plan` query quarry by target name.
+
+A target name is one path segment, and not `00-index.md` or
+`observed-edges.json`, which the docs repo root already owns. Its docs
+folder is validated like the root one, and both are rechecked on every
+run, so a hand-edited `.quarry/.config` is refused before anything is
+written. Two targets may not share a name or a docs folder, and one
+target's docs folder may not sit inside another's; a target's folder
+inside the root `docs_dir` is fine, and the umbrella import skips it.
 
 </details>
 

@@ -181,6 +181,13 @@ impl World {
         std::fs::write(full, body).expect("write file");
     }
 
+    /// Writes files at arbitrary repo-relative paths in any source repo.
+    pub fn write_files_in(&self, repo: &Path, files: &[(&str, &str)]) {
+        for (path, body) in files {
+            self.write_file(repo, path, body);
+        }
+    }
+
     /// One repo folder's stamp in the docs repo at `main`.
     pub fn remote_stamp(&self, repo: &str) -> String {
         self.remote_file(&format!("{repo}/.quarry-stamp"))
@@ -477,6 +484,92 @@ pub fn contract_world() -> Contracts {
         producer,
         consumer,
     }
+}
+
+/// A root index-of-indexes linking each workspace's docs index, as Capstone's
+/// `map` writes it; each link is given as (workspace, target).
+pub fn umbrella_index(date: &str, links: &[(&str, &str)]) -> String {
+    let mut text = format!(
+        "---\ngenerated_date: {date}\n---\n\n# Workspaces\n\n| Workspace | Index |\n|---|---|\n"
+    );
+    for (name, target) in links {
+        text.push_str(&format!("| {name} | [{name}]({target}) |\n"));
+    }
+    text
+}
+
+pub struct Mono {
+    pub w: World,
+    pub head: String,
+}
+
+/// The two workspaces and the root index-of-indexes `monorepo()` builds, for a
+/// test that wants to register the targets in its own order.
+pub fn write_monorepo_files(w: &World) {
+    w.write_files_in(
+        &w.source,
+        &[
+            (
+                "services/billing/docs/capstone/00-index.md",
+                &index_page("2026-09-04"),
+            ),
+            (
+                "services/billing/docs/capstone/09-interfaces.md",
+                &produces_page("2026-09-04", "orders", "http", "GET /invoices"),
+            ),
+            (
+                "services/orders/docs/capstone/00-index.md",
+                &index_page("2026-09-03"),
+            ),
+            (
+                "services/orders/docs/capstone/09-interfaces.md",
+                &consumes_page("2026-09-03", "billing", "http", "GET /invoices"),
+            ),
+            (
+                "docs/capstone/00-index.md",
+                &umbrella_index(
+                    "2026-09-04",
+                    &[
+                        (
+                            "billing",
+                            "../../services/billing/docs/capstone/00-index.md",
+                        ),
+                        (
+                            "orders",
+                            "../../services/orders/docs/capstone/00-index.md#overview",
+                        ),
+                    ],
+                ),
+            ),
+        ],
+    );
+}
+
+/// One source repo (`ingest-api`) with two workspaces registered as targets and
+/// a root index-of-indexes. Registered but not imported.
+pub fn monorepo() -> Mono {
+    let w = world();
+    write_monorepo_files(&w);
+    let first = w.run(&[
+        "init",
+        "--url",
+        &w.docs_url,
+        "--name",
+        "billing",
+        "--docs-dir",
+        "services/billing/docs/capstone",
+    ]);
+    assert_eq!(code(&first), 0, "{}", stderr(&first));
+    let second = w.run(&[
+        "init",
+        "--name",
+        "orders",
+        "--docs-dir",
+        "services/orders/docs/capstone",
+    ]);
+    assert_eq!(code(&second), 0, "{}", stderr(&second));
+    let head = w.commit_push("docs");
+    Mono { w, head }
 }
 
 pub struct Wired {

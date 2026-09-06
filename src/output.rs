@@ -34,6 +34,8 @@ pub(crate) struct InitOut {
     pub(crate) clone: String,
     pub(crate) cloned: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) targets: Vec<crate::config::Target>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) notes: Vec<String>,
 }
 
@@ -73,8 +75,10 @@ pub(crate) enum Payload {
     Help(String),
     Init(InitOut),
     Write(WriteOut),
+    WriteMany(Vec<WriteOut>),
     Sync(SyncOut),
     Remove(RemoveOut),
+    RemoveMany(Vec<RemoveOut>),
     Repos(Vec<RepoRow>),
     Files(FilesOut),
     Show(Box<RepoShow>),
@@ -151,8 +155,10 @@ fn payload_value(payload: &Payload) -> Value {
         Payload::Help(text) => json!({ "help": text }),
         Payload::Init(out) => serde_json::to_value(out).unwrap_or(Value::Null),
         Payload::Write(out) => serde_json::to_value(out).unwrap_or(Value::Null),
+        Payload::WriteMany(outs) => serde_json::to_value(outs).unwrap_or(Value::Null),
         Payload::Sync(out) => serde_json::to_value(out).unwrap_or(Value::Null),
         Payload::Remove(out) => serde_json::to_value(out).unwrap_or(Value::Null),
+        Payload::RemoveMany(outs) => serde_json::to_value(outs).unwrap_or(Value::Null),
         Payload::Repos(rows) => serde_json::to_value(rows).unwrap_or(Value::Null),
         Payload::Files(out) => serde_json::to_value(out).unwrap_or(Value::Null),
         Payload::Show(out) => serde_json::to_value(out).unwrap_or(Value::Null),
@@ -180,6 +186,9 @@ fn human(payload: &Payload) -> String {
                 text.push_str(&format!("clone current at {}\n", out.clone));
             }
             text.push_str("wrote .quarry/.config and .quarry/.gitignore\n");
+            for target in &out.targets {
+                text.push_str(&format!("target {}: {}\n", target.name, target.docs_dir));
+            }
             if let Some(repo) = &out.repo {
                 text.push_str(&format!(
                     "this repo is `{repo}` (from origin, default branch {}). Next: quarry add\n",
@@ -188,25 +197,11 @@ fn human(payload: &Payload) -> String {
             }
             text
         }
-        Payload::Write(out) => {
-            let mut text = String::new();
-            for note in &out.notes {
-                text.push_str(note);
-                text.push('\n');
-            }
-            match out.result.as_str() {
-                "current" => text.push_str(&format!("{} @ {}: current\n", out.repo, out.to)),
-                "skipped" => text.push_str(&format!(
-                    "{}: docs repo already holds a newer commit, skipped\n",
-                    out.repo
-                )),
-                _ => {
-                    text.push_str(&format!(
-                        "{} @ {} -> {} files imported\n",
-                        out.repo, out.to, out.files
-                    ));
-                    text.push_str("root index regenerated; pushed\n");
-                }
+        Payload::Write(out) => write_block(out, true),
+        Payload::WriteMany(outs) => {
+            let mut text: String = outs.iter().map(|out| write_block(out, false)).collect();
+            if outs.iter().any(|out| out.result == "imported") {
+                text.push_str("root index regenerated; pushed\n");
             }
             text
         }
@@ -231,23 +226,8 @@ fn human(payload: &Payload) -> String {
             }
             text
         }
-        Payload::Remove(out) => {
-            let mut text = String::new();
-            if out.removed {
-                text.push_str(&format!("removed {}\n", out.repo));
-            } else {
-                text.push_str(&format!("{} is not in the docs repo\n", out.repo));
-            }
-            if !out.dangling.is_empty() {
-                text.push_str(&format!(
-                    "{} repos still declare edges to {}: {}\n",
-                    out.dangling.len(),
-                    out.repo,
-                    out.dangling.join(", ")
-                ));
-            }
-            text
-        }
+        Payload::Remove(out) => remove_block(out),
+        Payload::RemoveMany(outs) => outs.iter().map(remove_block).collect(),
         Payload::Repos(rows) => {
             if rows.is_empty() {
                 return "no repos yet; run quarry add in a repo\n".to_string();
@@ -470,7 +450,9 @@ fn human(payload: &Payload) -> String {
             for contract in &out.contracts {
                 text.push_str(&format!(
                     "{} produces {} {}\n",
-                    out.repo, contract.kind, contract.name
+                    contract.target.as_deref().unwrap_or(&out.repo),
+                    contract.kind,
+                    contract.name
                 ));
                 for consumer in &contract.consumers {
                     let fields = if consumer.fields.is_empty() {
@@ -503,6 +485,51 @@ fn human(payload: &Payload) -> String {
             text
         }
     }
+}
+
+// `trailer` is the closing line one run prints once, however many folders it
+// wrote.
+fn write_block(out: &WriteOut, trailer: bool) -> String {
+    let mut text = String::new();
+    for note in &out.notes {
+        text.push_str(note);
+        text.push('\n');
+    }
+    match out.result.as_str() {
+        "current" => text.push_str(&format!("{} @ {}: current\n", out.repo, out.to)),
+        "skipped" => text.push_str(&format!(
+            "{}: docs repo already holds a newer commit, skipped\n",
+            out.repo
+        )),
+        _ => {
+            text.push_str(&format!(
+                "{} @ {} -> {} files imported\n",
+                out.repo, out.to, out.files
+            ));
+            if trailer {
+                text.push_str("root index regenerated; pushed\n");
+            }
+        }
+    }
+    text
+}
+
+fn remove_block(out: &RemoveOut) -> String {
+    let mut text = String::new();
+    if out.removed {
+        text.push_str(&format!("removed {}\n", out.repo));
+    } else {
+        text.push_str(&format!("{} is not in the docs repo\n", out.repo));
+    }
+    if !out.dangling.is_empty() {
+        text.push_str(&format!(
+            "{} repos still declare edges to {}: {}\n",
+            out.dangling.len(),
+            out.repo,
+            out.dangling.join(", ")
+        ));
+    }
+    text
 }
 
 // `(declared, never observed)` needs the file to be there to mean anything, and
@@ -652,6 +679,7 @@ mod tests {
                         .collect(),
                     warnings: Vec::new(),
                 }],
+                target: None,
             }],
             breaks,
             warnings: Vec::new(),
@@ -666,6 +694,7 @@ mod tests {
             name: "GET /records".to_string(),
             field: "content_type".to_string(),
             reason: "no longer produced".to_string(),
+            target: None,
         }]
     }
 

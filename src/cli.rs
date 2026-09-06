@@ -35,6 +35,9 @@ pub(crate) enum Command {
         /// The docs folder in this repo.
         #[arg(long, env = "QUARRY_DOCS_DIR")]
         docs_dir: Option<String>,
+        /// A monorepo target to add or update; the folder in the docs repo. Needs --docs-dir.
+        #[arg(long)]
+        name: Option<String>,
         /// This repo's default branch, when origin/HEAD does not say.
         #[arg(long, env = "QUARRY_DEFAULT_BRANCH")]
         default_branch: Option<String>,
@@ -144,12 +147,14 @@ pub(crate) fn run(cli: &Cli) -> Result<Response> {
         Command::Init {
             url,
             docs_dir,
+            name,
             default_branch,
             force,
         } => commands::init(
             &ctx,
             given(url),
             given(docs_dir),
+            given(name),
             given(default_branch),
             *force,
         ),

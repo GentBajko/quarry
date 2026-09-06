@@ -53,6 +53,7 @@ fn s1_a_newer_commit_is_imported() {
         stamp.contains("\"origin\":\"localhost/remotes/ingest-api\""),
         "{stamp}"
     );
+    assert!(stamp.contains("\"docs_dir\":\"docs/capstone\""), "{stamp}");
 }
 
 #[test]
