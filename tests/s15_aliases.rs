@@ -534,3 +534,40 @@ fn s15_remove_lists_an_aliased_consumer_as_dangling() {
     assert!(text.contains("still declare edges to ingest-api"), "{text}");
     assert!(text.contains("record-store"), "{text}");
 }
+
+#[test]
+fn s15_the_repo_total_leaves_out_by_name_rows() {
+    let w = world();
+    assert!(w.run(&["init", "--url", &w.docs_url]).status.success());
+    w.write_docs(&[
+        ("00-index.md", &index_page(DATE)),
+        (
+            "09-interfaces.md",
+            "---\ngenerated_date: 2026-09-04\nproduces:\n  - kind: sqs\n    name: file-ingest\n    to: record-store\n  - kind: http\n    name: GET /records\n    to: unknown\n---\n\n## Produces\n\n| Kind | Name |\n|---|---|\n| sqs | file-ingest |\n| http | GET /records |\n",
+        ),
+    ]);
+    w.commit_push("docs");
+    assert!(w.run(&["add"]).status.success());
+    register(&w, "record-store", &[("00-index.md", &index_page(DATE))]);
+    register(
+        &w,
+        "report-builder",
+        &[
+            ("00-index.md", &index_page(DATE)),
+            (
+                "09-interfaces.md",
+                "---\ngenerated_date: 2026-09-03\n---\n\n## Consumes\n\n### GET /records (v2)\n\n| Field | Type |\n|---|---|\n| id | string |\n",
+            ),
+        ],
+    );
+    assert!(w.run(&["sync"]).status.success());
+    let text = stdout(&w.run(&["docs", "deps", "ingest-api", "--downstream", "--depth", "0"]));
+    assert!(text.contains("sqs file-ingest -> record-store"), "{text}");
+    assert!(
+        text.contains("http GET /records -> report-builder (by name only)"),
+        "{text}"
+    );
+    // Two repo names on screen, one of them a lead: the total counts the edge
+    // only, which is what README's Cross-repo edges section promises.
+    assert!(text.contains("1 repos, depth 1"), "{text}");
+}

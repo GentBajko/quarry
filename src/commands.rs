@@ -876,7 +876,7 @@ fn short(sha: &str) -> String {
 }
 
 fn secret_note(hit: &crate::secrets::SecretHit) -> String {
-    format!("{} contains a {}", hit.file, hit.pattern)
+    format!("{} matches the {} shape", hit.file, hit.pattern)
 }
 
 // Hits are collected across every pending unit before the first folder is

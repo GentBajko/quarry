@@ -50,7 +50,7 @@ fn s19_strict_update_refuses_a_page_with_a_secret() {
     assert_eq!(code(&out), 1, "{}", stdout(&out));
     let err = stderr(&out);
     assert!(
-        err.contains("docs/capstone/07-operations.md contains a github-token"),
+        err.contains("docs/capstone/07-operations.md matches the github-token shape"),
         "{err}"
     );
     assert!(
@@ -82,7 +82,7 @@ fn s19_strict_add_refuses_before_the_first_import() {
     let out = w.run(&["add", "--strict"]);
     assert_eq!(code(&out), 1, "{}", stdout(&out));
     assert!(
-        stderr(&out).contains("docs/capstone/07-operations.md contains a private-key"),
+        stderr(&out).contains("docs/capstone/07-operations.md matches the private-key shape"),
         "{}",
         stderr(&out)
     );
@@ -102,7 +102,7 @@ fn s19_non_strict_update_imports_with_a_note() {
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let text = stdout(&out);
     assert!(
-        text.contains("docs/capstone/07-operations.md contains a github-token"),
+        text.contains("docs/capstone/07-operations.md matches the github-token shape"),
         "{text}"
     );
     assert!(text.contains("files imported"), "{text}");
@@ -125,7 +125,7 @@ fn s19_json_note_names_the_pattern_never_the_text() {
         .unwrap_or_default();
     assert!(
         notes.contains(&Value::String(
-            "docs/capstone/07-operations.md contains a github-token".to_string()
+            "docs/capstone/07-operations.md matches the github-token shape".to_string()
         )),
         "{notes:?}"
     );
@@ -149,7 +149,7 @@ fn s19_a_json_strict_refusal_is_one_envelope() {
         value["error"]
             .as_str()
             .unwrap_or_default()
-            .contains("docs/capstone/07-operations.md contains a github-token"),
+            .contains("docs/capstone/07-operations.md matches the github-token shape"),
         "{value}"
     );
     assert!(
@@ -168,7 +168,7 @@ fn s19_non_markdown_files_are_scanned() {
     let out = w.run(&["update", "--strict"]);
     assert_eq!(code(&out), 1, "{}", stdout(&out));
     assert!(
-        stderr(&out).contains("docs/capstone/example.env contains a stripe-key"),
+        stderr(&out).contains("docs/capstone/example.env matches the stripe-key shape"),
         "{}",
         stderr(&out)
     );
@@ -180,7 +180,7 @@ fn s19_strict_with_a_clean_tree_imports() {
     leak(&w, "<redacted>");
     let out = w.run(&["update", "--strict"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
-    assert!(!stdout(&out).contains("contains a"), "{}", stdout(&out));
+    assert!(!stdout(&out).contains("matches the"), "{}", stdout(&out));
     assert!(
         w.remote_files()
             .contains(&"ingest-api/07-operations.md".to_string())
@@ -198,10 +198,10 @@ fn s19_two_patterns_in_one_file_are_two_lines() {
     assert_eq!(code(&out), 1, "{}", stdout(&out));
     let err = stderr(&out);
     let token = err
-        .find("docs/capstone/07-operations.md contains a github-token")
+        .find("docs/capstone/07-operations.md matches the github-token shape")
         .unwrap_or_else(|| panic!("{err}"));
     let key = err
-        .find("docs/capstone/07-operations.md contains a private-key")
+        .find("docs/capstone/07-operations.md matches the private-key shape")
         .unwrap_or_else(|| panic!("{err}"));
     assert!(token < key, "{err}");
 }
@@ -232,8 +232,9 @@ fn s19_a_secret_in_the_second_target_leaves_the_first_unwritten() {
     let out = w.run(&["update", "--strict"]);
     assert_eq!(code(&out), 1, "{}", stdout(&out));
     assert!(
-        stderr(&out)
-            .contains("services/orders/docs/capstone/07-operations.md contains a github-token"),
+        stderr(&out).contains(
+            "services/orders/docs/capstone/07-operations.md matches the github-token shape"
+        ),
         "{}",
         stderr(&out)
     );
@@ -261,10 +262,10 @@ fn s19_a_secret_in_the_second_target_leaves_the_first_unwritten() {
     assert_eq!(code(&out), 1, "{}", stdout(&out));
     let err = stderr(&out);
     let billing = err
-        .find("services/billing/docs/capstone/07-operations.md contains a private-key")
+        .find("services/billing/docs/capstone/07-operations.md matches the private-key shape")
         .unwrap_or_else(|| panic!("{err}"));
     let orders = err
-        .find("services/orders/docs/capstone/07-operations.md contains a github-token")
+        .find("services/orders/docs/capstone/07-operations.md matches the github-token shape")
         .unwrap_or_else(|| panic!("{err}"));
     assert!(billing < orders, "{err}");
     assert_eq!(head_of(&w, &clone_path(&w)), before);

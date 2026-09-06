@@ -157,3 +157,44 @@ fn s7_an_unknown_repo_refuses() {
         stderr(&out)
     );
 }
+
+#[test]
+fn s7_a_second_contract_to_one_consumer_is_not_a_cycle() {
+    let w = world();
+    assert!(w.run(&["init", "--url", &w.docs_url]).status.success());
+    let data = w.other_repo("record-store");
+    w.write_docs_in(
+        &data,
+        &[
+            ("00-index.md", &index_page("2026-09-04")),
+            (
+                "09-interfaces.md",
+                "---\ngenerated_date: 2026-09-04\nproduces:\n  - kind: http\n    name: GET /a\n    to: report-builder\n  - kind: http\n    name: GET /b\n    to: report-builder\n---\n\n## Produces\n\n| Kind | Name |\n|---|---|\n| http | GET /a |\n| http | GET /b |\n",
+            ),
+        ],
+    );
+    w.commit_push_in(&data, "docs");
+    assert!(w.run_in(&data, &["add"]).status.success());
+    let report_builder = w.other_repo("report-builder");
+    w.write_docs_in(
+        &report_builder,
+        &[("00-index.md", &index_page("2026-09-01"))],
+    );
+    w.commit_push_in(&report_builder, "docs");
+    assert!(w.run_in(&report_builder, &["add"]).status.success());
+    assert!(w.run(&["sync"]).status.success());
+    let out = w.run(&[
+        "docs",
+        "deps",
+        "record-store",
+        "--downstream",
+        "--depth",
+        "0",
+    ]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("http GET /a -> report-builder"), "{text}");
+    assert!(text.contains("http GET /b -> report-builder"), "{text}");
+    assert!(!text.contains("(cycle)"), "{text}");
+    assert!(text.contains("1 repos, depth 1"), "{text}");
+}

@@ -217,7 +217,7 @@ writing anything, when a page holds a secret-shaped string, naming the file
 and the shape and never the string:
 
 ```text
-docs/capstone/07-operations.md contains a github-token
+docs/capstone/07-operations.md matches the github-token shape
 remove them from the docs before importing
 ```
 
@@ -311,7 +311,11 @@ A producer that cannot name its callers writes `to: unknown`. That row is
 a publication: counted, searchable, shown by `docs show` as `-> (unknown)`,
 and never an edge. `docs deps --downstream` then appends repos whose
 interfaces page mentions the name, marked `(by name only)`. Treat that
-list as a lead and confirm it before acting on it.
+list as a lead and confirm it before acting on it. The walk stops at a
+by-name row rather than expanding it, and the closing `<N> repos` line
+counts only repos reached over a real edge. Five rows naming four repos
+can therefore end on `3 repos, depth 1`, one name having arrived by
+name alone.
 
 ### Observed edges
 
@@ -446,7 +450,7 @@ notes without changing its exit code.
 | `quarry docs show <repo>` | Stamps, aliases, both edge directions, publications with unknown consumers, and the repo's overview section. Edge lines carry the same observed marks as `deps` |
 | `quarry docs section <repo> "<heading>"` | One section by heading. Exact match first, then prefix; an ambiguous heading lists the candidates and exits 1 |
 | `quarry docs search "<term>" [--repo] [--limit]` | Full-text hits by repo, file and heading |
-| `quarry docs deps <repo> --downstream\|--upstream [--depth N]` | The edge walk. `--depth 0` is unlimited; cycles are marked once and not expanded. Publications add possible consumers `(by name only)`; with `observed-edges.json` present, edges are marked `(observed, undeclared)` or `(declared, never observed)` |
+| `quarry docs deps <repo> --downstream\|--upstream [--depth N]` | The edge walk. `--depth 0` is unlimited; cycles are marked once and not expanded. Publications add possible consumers `(by name only)`, which the walk never follows and the closing `<N> repos` total never counts, so that total can be lower than the number of repo names on screen; with `observed-edges.json` present, edges are marked `(observed, undeclared)` or `(declared, never observed)` |
 | `quarry docs path <a> <b>` | The shortest chain of edges, falling back to the reverse direction |
 | `quarry docs index [--force]` | Rebuild the local index without touching the network, listing every edge target that resolved to nothing and, when `observed-edges.json` is there, the `observed edges:` count and its generation date |
 

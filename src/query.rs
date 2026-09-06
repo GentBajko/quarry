@@ -1,6 +1,6 @@
 //! The read side, over the index only.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::Serialize;
 
@@ -258,6 +258,20 @@ fn consumers_by_name(index: &Index, node: &str, name: &str) -> Result<Vec<String
     Ok(rows.collect::<std::result::Result<Vec<_>, _>>()?)
 }
 
+// An edge closes a loop only when its far end sits on the path back to the
+// start. A second contract to a repo already queued elsewhere in the walk is a
+// parallel edge: it prints unmarked and is not queued again.
+fn closes_a_loop(parents: &HashMap<String, String>, node: &str, other: &str) -> bool {
+    let mut at = node;
+    while let Some(up) = parents.get(at) {
+        if up == other {
+            return true;
+        }
+        at = up;
+    }
+    false
+}
+
 pub(crate) fn deps(
     index: &Index,
     repo: &str,
@@ -267,6 +281,7 @@ pub(crate) fn deps(
     require_repo(index, repo)?;
     let downstream = direction == Direction::Downstream;
     let mut seen: HashSet<String> = HashSet::from([repo.to_string()]);
+    let mut parents: HashMap<String, String> = HashMap::new();
     let mut frontier: VecDeque<(String, u32)> = VecDeque::from([(repo.to_string(), 0)]);
     let mut edges: Vec<DepEdge> = Vec::new();
     let mut truncated = false;
@@ -287,7 +302,7 @@ pub(crate) fn deps(
             } else {
                 edge.from_repo.clone()
             };
-            let cycle = seen.contains(&other);
+            let cycle = other == node || closes_a_loop(&parents, &node, &other);
             edges.push(DepEdge {
                 repo: other.clone(),
                 kind: edge.kind.clone(),
@@ -304,8 +319,9 @@ pub(crate) fn deps(
                 last_seen: edge.last_seen.clone(),
             });
             max_depth = max_depth.max(at + 1);
-            if !cycle && !edge.missing {
+            if !seen.contains(&other) && !edge.missing {
                 seen.insert(other.clone());
+                parents.insert(other.clone(), node.clone());
                 frontier.push_back((other, at + 1));
             }
         }
