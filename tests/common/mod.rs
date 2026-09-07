@@ -48,13 +48,20 @@ fn bare_on(base: &Path, name: &str, branch: &str) {
     );
 }
 
+// A canonical file URL: forward slashes, and rooted so a Windows path
+// becomes `file:///C:/...` rather than `file://C:\...`, whose backslashes
+// come back JSON-escaped out of `.quarry/.config` and match no raw string.
 fn url(base: &Path, name: &str) -> String {
-    format!(
-        "file://{}",
-        base.join("remotes")
-            .join(format!("{name}.git"))
-            .to_string_lossy()
-    )
+    let path = base
+        .join("remotes")
+        .join(format!("{name}.git"))
+        .to_string_lossy()
+        .replace('\\', "/");
+    if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    }
 }
 
 /// A fresh source repo wired to its own bare origin, with one commit on main.
