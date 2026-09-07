@@ -353,6 +353,7 @@ fn stamp(origin: &str, docs_dir: &str) -> String {
 }
 
 /// Extracts job 1's script from the template and runs it over `repo`.
+#[cfg(unix)]
 fn run_audit_job1(work: &Path, repo: &Path) -> std::process::Output {
     let audit = template("quarry-audit.yml");
     let script = audit["jobs"]["committer-folders"]["steps"]
@@ -379,6 +380,9 @@ fn run_audit_job1(work: &Path, repo: &Path) -> std::process::Output {
 // `identity::origin` while GIT_COMMITTER_NAME carries the repo's own case, so
 // a mixed-case monorepo is the case an all-lowercase fixture cannot see.
 #[test]
+// The audit job is a bash script, and the runners that run it are the
+// Linux ones; Windows has no shell to hand it to.
+#[cfg(unix)]
 fn s19_the_audit_allows_a_mixed_case_monorepo() {
     let work = tempfile::tempdir().expect("tempdir");
     let repo = work.path().join("docs");
@@ -421,6 +425,9 @@ fn s19_the_audit_allows_a_mixed_case_monorepo() {
 // The case fold must not widen the match: H9 replaced a regex that let
 // `docsXsite` claim `docs.site/`, and the literal comparison still holds.
 #[test]
+// The audit job is a bash script, and the runners that run it are the
+// Linux ones; Windows has no shell to hand it to.
+#[cfg(unix)]
 fn s19_the_audit_still_flags_a_near_miss_folder_name() {
     let work = tempfile::tempdir().expect("tempdir");
     let repo = work.path().join("docs");
