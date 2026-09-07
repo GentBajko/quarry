@@ -171,6 +171,9 @@ fn s1_a_stale_clone_is_reset_before_importing() {
 }
 
 #[test]
+// The hook is a POSIX shell script the test has to mark executable, so
+// the redo path is exercised on the platforms that can run one.
+#[cfg(unix)]
 fn s1_a_rejected_push_is_redone_and_lands() {
     let w = added();
     let hook = w.base().join("remotes/docs-quarry.git/hooks/update");

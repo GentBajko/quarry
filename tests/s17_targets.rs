@@ -325,6 +325,9 @@ fn s17_a_change_in_one_workspace_reimports_all_three() {
 }
 
 #[test]
+// The hook is a POSIX shell script the test has to mark executable, so
+// the redo path is exercised on the platforms that can run one.
+#[cfg(unix)]
 fn s17_a_rejected_multi_target_push_is_redone_and_lands() {
     let mono = imported();
     let hook = mono.w.base().join("remotes/docs-quarry.git/hooks/update");
