@@ -8,10 +8,16 @@ use common::*;
 
 fn added() -> World {
     let w = world();
-    assert_eq!(code(&w.run(&["init", "--url", &w.docs_url])), 0);
+    {
+        let out = &w.run(&["init", "--url", &w.docs_url]);
+        assert_eq!(code(&out), 0, "{}\n{}", stdout(&out), stderr(&out));
+    }
     w.write_docs(&[("00-index.md", &index_page("2026-09-04"))]);
     w.commit_push("docs");
-    assert_eq!(code(&w.run(&["add"])), 0);
+    {
+        let out = &w.run(&["add"]);
+        assert_eq!(code(&out), 0, "{}\n{}", stdout(&out), stderr(&out));
+    }
     w
 }
 
@@ -61,7 +67,10 @@ fn s1_never_go_backwards() {
     let w = added();
     w.write_docs(&[("01-architecture.md", "# later\n")]);
     w.commit_push("later");
-    assert_eq!(code(&w.run(&["update"])), 0);
+    {
+        let out = &w.run(&["update"]);
+        assert_eq!(code(&out), 0, "{}\n{}", stdout(&out), stderr(&out));
+    }
     let older = stdout(&w.git(&w.source, &["rev-parse", "HEAD~1"]))
         .trim()
         .to_string();
@@ -96,7 +105,10 @@ fn s1_a_diverged_stamp_refuses_until_forced() {
     let w = added();
     w.write_docs(&[("01-architecture.md", "# first\n")]);
     w.commit_push("first");
-    assert_eq!(code(&w.run(&["update"])), 0);
+    {
+        let out = &w.run(&["update"]);
+        assert_eq!(code(&out), 0, "{}\n{}", stdout(&out), stderr(&out));
+    }
     w.write_docs(&[("01-architecture.md", "# rewritten\n")]);
     w.git(&w.source, &["add", "-A"]);
     w.git(
@@ -134,7 +146,10 @@ fn s1_an_unreachable_stamp_refuses_until_forced() {
     let out = w.run(&["update"]);
     assert_eq!(code(&out), 1, "{}", stdout(&out));
     assert!(stderr(&out).contains("not reachable"), "{}", stderr(&out));
-    assert_eq!(code(&w.run(&["update", "--force"])), 0);
+    {
+        let out = &w.run(&["update", "--force"]);
+        assert_eq!(code(&out), 0, "{}\n{}", stdout(&out), stderr(&out));
+    }
 }
 
 #[test]
@@ -160,7 +175,10 @@ fn s1_a_stale_clone_is_reset_before_importing() {
     let other = w.other_repo("identity-api");
     w.write_docs_in(&other, &[("00-index.md", &index_page("2026-09-02"))]);
     w.commit_push_in(&other, "docs");
-    assert_eq!(code(&w.run_in(&other, &["add"])), 0);
+    {
+        let out = &w.run_in(&other, &["add"]);
+        assert_eq!(code(&out), 0, "{}\n{}", stdout(&out), stderr(&out));
+    }
     w.write_docs(&[("01-architecture.md", "# next\n")]);
     w.commit_push("next");
     let out = w.run(&["update"]);
@@ -217,7 +235,10 @@ fn s1_a_second_repo_claiming_the_same_name_refuses() {
     w.git(&clash, &["remote", "set-url", "origin", &mirror_url]);
     w.git(&clash, &["push", "--quiet", "origin", "main"]);
     w.git(&clash, &["remote", "set-head", "origin", "-a"]);
-    assert_eq!(code(&w.run_in(&clash, &["init", "--url", &w.docs_url])), 0);
+    {
+        let out = &w.run_in(&clash, &["init", "--url", &w.docs_url]);
+        assert_eq!(code(&out), 0, "{}\n{}", stdout(&out), stderr(&out));
+    }
     w.write_docs_in(&clash, &[("00-index.md", &index_page("2026-09-01"))]);
     w.commit_push_in(&clash, "docs");
     let out = w.run_in(&clash, &["add"]);

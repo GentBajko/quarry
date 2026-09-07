@@ -259,7 +259,10 @@ fn s20_a_current_index_still_reports_its_ambiguities() {
         "2026-09-01",
         &open_edges_page("2026-09-01", &[], &[("http", "GET /records")]),
     );
-    assert_eq!(code(&w.run(&["docs", "index", "--force"])), 0);
+    {
+        let out = &w.run(&["docs", "index", "--force"]);
+        assert_eq!(code(&out), 0, "{}\n{}", stdout(&out), stderr(&out));
+    }
     let out = w.run(&["docs", "index"]);
     assert_eq!(code(&out), 0, "{}", stderr(&out));
     let text = stdout(&out);

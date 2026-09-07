@@ -13,6 +13,11 @@ pub(crate) struct RepoIdentity {
 
 pub(crate) fn from_origin_url(url: &str) -> Result<RepoIdentity> {
     let raw = url.trim();
+    // A local remote on Windows arrives as `file://D:\path\repo.git`, and git
+    // takes either separator there. Reading only `/` leaves one segment and
+    // refuses a repo whose remote is perfectly valid.
+    let normalized = raw.replace('\\', "/");
+    let raw = normalized.as_str();
     let (host, path) = split_host_path(raw)
         .ok_or_else(|| QuarryError::refusal(format!("cannot derive owner/repo from {raw}")))?;
     let path = path.trim_matches('/');
@@ -41,7 +46,8 @@ pub(crate) fn from_origin_url(url: &str) -> Result<RepoIdentity> {
 }
 
 pub(crate) fn clone_name(url: &str) -> Result<String> {
-    let raw = url.trim().trim_end_matches('/');
+    let normalized = url.replace('\\', "/");
+    let raw = normalized.trim().trim_end_matches('/');
     let raw = raw.strip_suffix(".git").unwrap_or(raw);
     let last = raw
         .rsplit(['/', ':'])
@@ -117,6 +123,17 @@ mod tests {
         let id = from_origin_url("ssh://git@git.internal:2222/team/svc.git").unwrap();
         assert_eq!(id.host, "git.internal");
         assert_eq!(id.name, "svc");
+    }
+
+    #[test]
+    fn s9_a_windows_local_remote_parses() {
+        let id = from_origin_url("file://D:\\a\\quarry\\remotes\\ingest-api.git").unwrap();
+        assert_eq!(id.name, "ingest-api");
+        assert_eq!(id.origin, "localhost/remotes/ingest-api");
+        assert_eq!(
+            clone_name("file://D:\\a\\quarry\\remotes\\docs-quarry.git").unwrap(),
+            "docs-quarry"
+        );
     }
 
     #[test]

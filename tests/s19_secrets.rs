@@ -209,7 +209,10 @@ fn s19_two_patterns_in_one_file_are_two_lines() {
 #[test]
 fn s19_a_secret_in_the_second_target_leaves_the_first_unwritten() {
     let Mono { w, .. } = monorepo();
-    assert_eq!(code(&w.run(&["add"])), 0);
+    {
+        let out = &w.run(&["add"]);
+        assert_eq!(code(&out), 0, "{}\n{}", stdout(&out), stderr(&out));
+    }
     let before = head_of(&w, &clone_path(&w));
     let billing_index = w.remote_file("billing/00-index.md");
 
