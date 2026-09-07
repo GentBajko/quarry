@@ -317,6 +317,7 @@ fn s19_the_audit_template_runs_both_jobs() {
 }
 
 /// Runs git in an audit fixture as `who`, with the ambient git config ignored.
+#[cfg(unix)]
 fn audit_git(dir: &Path, who: &str, args: &[&str]) -> std::process::Output {
     let empty = dir.join("../gitconfig");
     std::fs::write(&empty, "").expect("gitconfig");
@@ -335,6 +336,7 @@ fn audit_git(dir: &Path, who: &str, args: &[&str]) -> std::process::Output {
 }
 
 /// Lays down a docs repo and commits `folders` (path, body) as `who`.
+#[cfg(unix)]
 fn audit_commit(dir: &Path, who: &str, folders: &[(&str, &str)]) {
     for (path, body) in folders {
         let file = dir.join(path);
@@ -348,6 +350,7 @@ fn audit_commit(dir: &Path, who: &str, folders: &[(&str, &str)]) {
     assert!(out.status.success(), "{}", stderr(&out));
 }
 
+#[cfg(unix)]
 fn stamp(origin: &str, docs_dir: &str) -> String {
     format!("{{\"commit\":\"0000000\",\"origin\":\"{origin}\",\"docs_dir\":\"{docs_dir}\"}}\n")
 }
