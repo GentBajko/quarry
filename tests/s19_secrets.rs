@@ -210,7 +210,7 @@ fn s19_two_patterns_in_one_file_are_two_lines() {
 fn s19_a_secret_in_the_second_target_leaves_the_first_unwritten() {
     let Mono { w, .. } = monorepo();
     {
-        let out = &w.run(&["add"]);
+        let out = w.run(&["add"]);
         assert_eq!(code(&out), 0, "{}\n{}", stdout(&out), stderr(&out));
     }
     let before = head_of(&w, &clone_path(&w));
