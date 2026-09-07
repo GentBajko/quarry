@@ -1,0 +1,6 @@
+# Fixture docs are read byte for byte by the tests that drive them, so
+# a checkout must not rewrite their line endings.
+*.md text eol=lf
+*.rs text eol=lf
+*.json text eol=lf
+*.toml text eol=lf

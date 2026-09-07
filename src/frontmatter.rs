@@ -29,7 +29,14 @@ pub(crate) struct EdgeDecl {
 }
 
 pub(crate) fn split(text: &str) -> (Option<&str>, &str) {
-    let rest = match text.strip_prefix("---\n") {
+    // A page written on Windows, or checked out with git's line-ending
+    // conversion on, opens `---\r\n`. Reading that as a page with no
+    // frontmatter would drop every stamp and every edge it declares, in
+    // silence.
+    let rest = match text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    {
         Some(rest) => rest,
         None => return (None, text),
     };
@@ -504,6 +511,27 @@ mod tests {
     use super::*;
 
     const PAGE: &str = "---\ngenerated_date: 2026-09-04\nproduces:\n  - kind: SQS\n    name: file-ingest\n    to: record-store\n    site: src/publish/sqs.py:57\nconsumes:\n  - kind: http\n    from: identity-api\n    endpoint: GET /customers/{id}\n---\n# Title\n\nintro\n\n## file-ingest (v2)\n\n| a | b |\n\n### deeper\n\nx\n\n## Next\n\ny\n";
+
+    #[test]
+    fn s6_crlf_frontmatter_still_parses() {
+        let page = "---\r\ngenerated_date: 2026-09-07\r\nknown_as: [a]\r\n---\r\n\r\n# Title\r\n\r\nbody\r\n";
+        let parsed = parse(page);
+        assert_eq!(parsed.warning, None);
+        assert_eq!(
+            parsed.fields.get("generated_date").and_then(|v| v.as_str()),
+            Some("2026-09-07")
+        );
+        let (names, warnings) = known_as_of(&parsed.fields);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(names, ["a"]);
+        // The page puts a blank line under the closing delimiter, so the
+        // body opens with that newline exactly as an LF page would.
+        assert!(
+            parsed.body.trim_start().starts_with("# Title"),
+            "{:?}",
+            parsed.body
+        );
+    }
 
     #[test]
     fn s6_frontmatter_parses_into_fields_and_body() {

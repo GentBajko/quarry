@@ -1,7 +1,7 @@
 //! `.quarry/.config` and `.quarry/.gitignore`.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -129,9 +129,26 @@ pub(crate) fn resolve(
 
 fn validate_docs_dir(docs_dir: &str) -> Result<()> {
     let path = Path::new(docs_dir);
+    // `is_absolute` is not enough: on Windows a path needs a drive letter to be
+    // absolute, so `/etc` reads as relative there and a hand-edited config
+    // would escape the repo. `has_root` catches the leading separator and the
+    // Prefix component catches a bare `C:`. Both separators are checked for
+    // `..`, since Windows accepts either.
+    // The config is committed and read on other machines, so the verdict
+    // cannot depend on the platform reading it: a leading separator and a
+    // drive or UNC prefix are refused everywhere, not only where this target
+    // calls them absolute.
+    let first = docs_dir.split(['/', '\\']).next().unwrap_or("");
+    let escapes = path.is_absolute()
+        || path.has_root()
+        || matches!(path.components().next(), Some(Component::Prefix(_)))
+        || docs_dir.starts_with('/')
+        || docs_dir.starts_with('\\')
+        || first.contains(':')
+        || docs_dir.split(['/', '\\']).any(|c| c == "..");
     // An empty dir is the repository root: `git ls-tree -r <sha>:` would import
     // the whole tree as one folder, so a hand-edited config is refused here.
-    if docs_dir.trim().is_empty() || path.is_absolute() || docs_dir.split('/').any(|c| c == "..") {
+    if docs_dir.trim().is_empty() || escapes {
         return Err(QuarryError::refusal(format!(
             "docs dir must be a relative path inside the repo: {docs_dir}"
         )));
@@ -281,6 +298,32 @@ mod tests {
     #[test]
     fn s12_no_url_anywhere_refuses() {
         assert!(resolve(None, None, None, None, None, "main".into()).is_err());
+    }
+
+    #[test]
+    fn s12_a_windows_shaped_docs_dir_refuses_on_every_platform() {
+        // `Path::is_absolute` is platform-dependent, so each of these reads as
+        // relative on one target or the other. None of them is inside the repo.
+        for dir in [
+            "/etc",
+            "\\\\server\\share",
+            "C:\\Windows",
+            "C:docs",
+            "docs\\..\\..\\etc",
+        ] {
+            assert!(
+                resolve(
+                    Some("u".into()),
+                    Some(dir.into()),
+                    None,
+                    None,
+                    None,
+                    "main".into()
+                )
+                .is_err(),
+                "{dir} was accepted"
+            );
+        }
     }
 
     #[test]
