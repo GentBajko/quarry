@@ -16,7 +16,7 @@
     alt="Installs as a single precompiled binary"></a>
   <img
     src="https://img.shields.io/badge/needs-git%202.30%2B-444C56?style=flat-square"
-    alt="Requires git 2.30 or newer and nothing else">
+    alt="Requires Git 2.30 or newer at runtime">
   <a href="LICENSE"><img
     src="https://img.shields.io/badge/license-Apache--2.0-1F2328?style=flat-square"
     alt="Apache-2.0 licensed"></a>
@@ -95,25 +95,23 @@ by hand.
 
 ### Step 2: install quarry
 
-A single static binary. No runtime, no `cargo`, nothing to keep running.
+Build from the documented source revision. As of 9 September 2026, no
+GitHub binary releases are published; the previously listed release
+installer URLs return 404.
 
 ```sh
-curl -LsSf https://github.com/GentBajko/quarry/releases/latest/download/quarry-installer.sh | sh
+cargo install --locked --git https://github.com/GentBajko/quarry --rev 78c71fab5f5818662dc02d5867246cec963567a9
 ```
 
-Windows:
+The same Cargo command works in a shell or PowerShell with Rust and the
+C build tools for your target installed. The manifest declares Rust
+1.85+; the documented source build was verified with Rust 1.91.1.
+Cargo normally installs into `~/.cargo/bin`; ensure its bin directory is
+on `PATH`. See the [installation manual](docs/manual/01-overview-and-installation.md)
+for a checkout-based build and release availability details.
 
-```powershell
-irm https://github.com/GentBajko/quarry/releases/latest/download/quarry-installer.ps1 | iex
-```
-
-Rust users can take `cargo binstall quarry`; anyone else can grab the
-archive for their platform off the releases page. Building it yourself is
-`cargo build --release`.
-
-The only requirement is `git` 2.30 or newer on `PATH`. quarry drives the
-git binary, so the credentials and proxy settings it uses are the ones
-you already configured. SQLite is compiled in.
+Once built, Quarry needs Git 2.30+ on `PATH` and no background service.
+It uses Git's existing credentials and proxy settings. SQLite is compiled in.
 
 ## Use it
 
