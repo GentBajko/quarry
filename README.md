@@ -55,6 +55,11 @@
   <a href="#with-capstone">With Capstone</a>
 </p>
 
+<p align="center">
+  <strong><a href="https://archways.dev/docs/quarry/">Read the complete user manual</a></strong> · <a href="docs/manual/README.md">Markdown source</a><br>
+  Worked examples, every command and output format, configuration, indexing, contract checks, and implementation limits.
+</p>
+
 ---
 
 ## Install

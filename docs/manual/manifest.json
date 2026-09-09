@@ -1,0 +1,74 @@
+{
+  "title": "Quarry",
+  "version": "0.2.0",
+  "commit": "78c71fab5f5818662dc02d5867246cec963567a9",
+  "sourceRepository": "https://github.com/GentBajko/quarry",
+  "researchDate": "2026-09-09",
+  "chapters": [
+    {
+      "file": "README.md",
+      "title": "Quarry documentation",
+      "description": "A source-verified practical manual for installing Quarry, importing docs, querying the graph, checking contracts, and operating CI."
+    },
+    {
+      "file": "01-overview-and-installation.md",
+      "title": "Quarry: what it does and how to install it",
+      "description": "Understand the source repo, shared docs repo, local clone, and embedded index; install or build the binary."
+    },
+    {
+      "file": "02-first-import-and-recorded-walkthrough.md",
+      "title": "First import and recorded walkthrough",
+      "description": "Create the minimum documentation, register a repository, inspect the shared estate, and distinguish recorded output from examples."
+    },
+    {
+      "file": "03-configuration-and-targets.md",
+      "title": "Configuration and monorepo targets",
+      "description": "Every config key and environment variable, path validation, target registration, umbrella imports, and target retirement."
+    },
+    {
+      "file": "04-imports-ownership-and-concurrency.md",
+      "title": "Imports, generated files, ownership, and concurrency",
+      "description": "What add/update/remove actually write, stamp ordering, strict checks, permalink rewriting, and concurrent-push limits."
+    },
+    {
+      "file": "05-writing-pages-and-interfaces.md",
+      "title": "Writing pages, interfaces, aliases, and observed edges",
+      "description": "The complete Markdown/frontmatter contract, three declaration forms, name joins, alias precedence, and traffic input schema."
+    },
+    {
+      "file": "06-reading-searching-and-traversing.md",
+      "title": "Reading, searching, and traversing dependencies",
+      "description": "Every docs query with examples, exact matching rules, graph directions, shortest paths, and confidence markers."
+    },
+    {
+      "file": "07-sqlite-index-and-freshness.md",
+      "title": "The SQLite index, SQL, and freshness",
+      "description": "Exact schema, rebuild triggers and transaction, FTS query SQL, read-only inspection recipes, cache caveats, and four freshness clocks."
+    },
+    {
+      "file": "08-contract-checking.md",
+      "title": "Checking documented contracts before a merge",
+      "description": "Producer working-tree checks, consumer snapshots, inline and model-backed field formats, verdicts, missing-data behavior, and limitations."
+    },
+    {
+      "file": "09-ci-and-automation.md",
+      "title": "CI, publishing workflows, and repository audits",
+      "description": "Wire default-branch imports, a pull-request check, the reusable GitHub App workflow, scheduled audits, and automation diagnostics."
+    },
+    {
+      "file": "10-command-output-and-exit-reference.md",
+      "title": "Command, output, and exit-code reference",
+      "description": "All verbs and flags, machine-readable envelope schemas, payload fields, recorded examples, and parser-stage exceptions."
+    },
+    {
+      "file": "11-troubleshooting.md",
+      "title": "Troubleshooting and recovery",
+      "description": "Diagnose setup, identity, imports, empty answers, contract coverage, cache state, credentials, and busy-repository failures."
+    },
+    {
+      "file": "12-parser-details-and-implementation-limits.md",
+      "title": "Parser details and implementation limits",
+      "description": "Less obvious implementation facts: JSON/YAML coercion, identity loss, path handling, table heuristics, freshness gaps, retries, and detector patterns."
+    }
+  ]
+}
